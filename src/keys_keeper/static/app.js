@@ -5,7 +5,14 @@
   async function api(path, opts = {}) {
     opts.headers = { ...(opts.headers || {}), 'Sec-Keys-Token': TOKEN };
     const r = await fetch(path, opts);
-    if (!r.ok) throw new Error(`${path}: ${r.status}`);
+    if (!r.ok) {
+      let detail = '';
+      try {
+        const body = await r.json();
+        if (body && body.error) detail = ` — ${body.error}`;
+      } catch {}
+      throw new Error(`${path}: ${r.status}${detail}`);
+    }
     return r.json();
   }
 
