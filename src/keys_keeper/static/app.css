@@ -700,6 +700,7 @@ body {
   justify-content: center;
   z-index: 5;
 }
+.modal-backdrop[hidden] { display: none; }
 .modal {
   width: 480px;
   background: var(--bg-elevated);
