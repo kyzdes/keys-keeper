@@ -149,7 +149,8 @@ def make_handler(admin: "AdminServer"):
             if path.startswith("/entry/") and path.endswith("/edit"):
                 from keys_keeper.pages import render_new_edit
                 from keys_keeper.store import MetadataStore
-                eid = path[len("/entry/"):-len("/edit")]
+                from urllib.parse import unquote
+                eid = unquote(path[len("/entry/"):-len("/edit")])
                 e = MetadataStore(paths).get_by_id(eid) or MetadataStore(paths).get_by_name(eid)
                 if e is None:
                     self._send(404, b"entry not found")
@@ -157,7 +158,8 @@ def make_handler(admin: "AdminServer"):
                 self._send(200, render_new_edit(paths=paths, token=admin.token, entry=e).encode("utf-8"))
                 return
             if path.startswith("/entry/"):
-                entry_id = path[len("/entry/"):]
+                from urllib.parse import unquote
+                entry_id = unquote(path[len("/entry/"):])
                 from keys_keeper.pages import render_entry_detail
                 from keys_keeper.store import MetadataStore
                 store = MetadataStore(paths)

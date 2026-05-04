@@ -243,9 +243,10 @@
     fetch('/api/heartbeat', { method: 'POST', headers: { 'Sec-Keys-Token': TOKEN } });
   }, 60000);
 
-  window.addEventListener('beforeunload', () => {
-    navigator.sendBeacon('/api/shutdown');
-  });
+  // Note: we deliberately do NOT shutdown on beforeunload — that fires on
+  // every <a href> navigation, not only on real tab close, and would kill
+  // the server mid-click. Idle auto-shutdown (15 min) and the explicit
+  // Settings → Shutdown button are the supported termination paths.
 
   if (document.getElementById('entries-mount')) {
     load().catch(err => {
