@@ -645,18 +645,28 @@
       });
       document.getElementById('ops-total').textContent = `${inRange.length} ops`;
 
-      // table
+      // table — built via createElement + textContent (NEVER innerHTML).
+      // caller_path comes from `ps -p PID -o command=` which any local
+      // process can poison via argv[0]; file_target comes verbatim from
+      // user CLI flags. Treating them as HTML would let a poisoned audit
+      // row hijack the admin session via a stored XSS in the same origin
+      // as the API surface.
       const tbody = document.getElementById('audit-rows');
       tbody.innerHTML = '';
       filtered.slice(0, 200).forEach(e => {
         const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td class="ts">${relTime(e.ts)}</td>
-          <td><span class="op-tag op-${e.op}" style="padding:1px 7px;border-radius:3px;font-size:10px">${e.op}</span></td>
-          <td class="name"><a href="/entry/${encodeURIComponent(e.name)}">${e.name}</a></td>
-          <td class="caller">${e.caller_path || ''}</td>
-          <td class="file">${e.file_target || '—'}</td>
-          <td class="${e.success ? 'ok' : 'fail'}">${e.success ? '✓' : '✗'}</td>`;
+        tr.append(
+          el('td', { class: 'ts' }, relTime(e.ts)),
+          el('td', {}, el('span', {
+            class: `op-tag op-${(e.op || '').replace(/[^a-z_]/g, '')}`,
+            style: 'padding:1px 7px;border-radius:3px;font-size:10px',
+          }, e.op || '')),
+          el('td', { class: 'name' },
+            el('a', { href: `/entry/${encodeURIComponent(e.name || '')}` }, e.name || '')),
+          el('td', { class: 'caller' }, e.caller_path || ''),
+          el('td', { class: 'file' }, e.file_target || '—'),
+          el('td', { class: e.success ? 'ok' : 'fail' }, e.success ? '✓' : '✗'),
+        );
         tbody.append(tr);
       });
     }

@@ -26,10 +26,28 @@ class AuditEvent:
         return json.dumps(self.__dict__, separators=(",", ":"))
 
 
+_UNTRUSTED_FIELD_MAX_LEN = 256
+
+
+def _sanitize_untrusted(s: str | None) -> str | None:
+    """Strip control chars and cap length on values that originate from the
+    OS (parent argv via `ps`) or from raw CLI flags. The audit JSONL is read
+    back by the admin UI; defense-in-depth against future code paths that
+    might render these fields without escaping (the current renderer uses
+    textContent, but we keep this guard so a regression there can't immediately
+    become a stored XSS)."""
+    if s is None:
+        return None
+    cleaned = "".join(ch for ch in s if ch == " " or (ch.isprintable() and ch not in "\r\n\t"))
+    if len(cleaned) > _UNTRUSTED_FIELD_MAX_LEN:
+        cleaned = cleaned[:_UNTRUSTED_FIELD_MAX_LEN] + "…"
+    return cleaned
+
+
 def _resolve_caller_path(pid: int) -> str:
     try:
         out = os.popen(f"ps -p {pid} -o command=").read().strip()
-        return out or "?"
+        return _sanitize_untrusted(out) or "?"
     except Exception:
         return "?"
 
@@ -59,7 +77,7 @@ class AuditLog:
             id=id_,
             caller_pid=ppid,
             caller_path=_resolve_caller_path(ppid),
-            file_target=file_target,
+            file_target=_sanitize_untrusted(file_target),
             success=success,
             error=error,
         )
