@@ -30,6 +30,15 @@
   {% endblock %}
   {% block content %}{% endblock %}
 </div>
+<div id="cmdk-overlay" hidden>
+  <div class="cmdk-modal">
+    <input id="cmdk-input" placeholder="Jump to entry · type to filter" autocomplete="off">
+    <div id="cmdk-results"></div>
+    <div class="cmdk-footer">
+      <span class="kbd">↑↓</span> navigate <span class="kbd">↵</span> open <span class="kbd">Esc</span> close
+    </div>
+  </div>
+</div>
 <script>
 (() => {
   const params = new URLSearchParams(location.search);
@@ -43,14 +52,5 @@
 </script>
 <script src="/static/app.js"></script>
 {% block extra_js %}{% endblock %}
-<div id="cmdk-overlay" hidden>
-  <div class="cmdk-modal">
-    <input id="cmdk-input" placeholder="Jump to entry · type to filter" autocomplete="off">
-    <div id="cmdk-results"></div>
-    <div class="cmdk-footer">
-      <span class="kbd">↑↓</span> navigate <span class="kbd">↵</span> open <span class="kbd">Esc</span> close
-    </div>
-  </div>
-</div>
 </body>
 </html>

@@ -76,13 +76,21 @@ def make_handler(admin: "AdminServer"):
         # ---- helpers ----
 
         def _verify_token(self) -> bool:
-            # Accept token via header (preferred) or via query string on initial HTML load.
+            # Accept token via header (fetch/XHR), session cookie (browser nav),
+            # or query string (initial HTML load with ?t=TOKEN).
             header_token = self.headers.get("Sec-Keys-Token")
             if header_token == admin.token:
+                self._auth_ok = True
                 return True
-            # Allow query-string token only on GET HTML pages
+            cookie_header = self.headers.get("Cookie", "")
+            for part in cookie_header.split(";"):
+                k, _, v = part.strip().partition("=")
+                if k == "kk_session" and v == admin.token:
+                    self._auth_ok = True
+                    return True
             qs = parse_qs(urlparse(self.path).query)
             if qs.get("t", [""])[0] == admin.token:
+                self._auth_ok = True
                 return True
             return False
 
@@ -92,6 +100,14 @@ def make_handler(admin: "AdminServer"):
             self.send_header("Content-Length", str(len(body)))
             for k, v in _NO_CACHE_HEADERS.items():
                 self.send_header(k, v)
+            # On every authenticated response, refresh the session cookie so subsequent
+            # browser navigation (regular <a href> clicks) carries auth without needing
+            # JS to inject the Sec-Keys-Token header.
+            if getattr(self, "_auth_ok", False):
+                self.send_header(
+                    "Set-Cookie",
+                    f"kk_session={admin.token}; HttpOnly; SameSite=Strict; Path=/",
+                )
             self.end_headers()
             self.wfile.write(body)
 
