@@ -22,3 +22,13 @@ def test_doctor_warns_when_reveal_env_missing(cli_env, capsys, monkeypatch):
     cli.main(["doctor"])
     out = capsys.readouterr().out
     assert "KEYS_KEEPER_ALLOW_REVEAL" in out
+
+
+def test_doctor_reports_data_count(cli_env, capsys, monkeypatch):
+    from io import StringIO
+    monkeypatch.setattr("sys.stdin", StringIO("v\n"))
+    cli.main(["add", "doc-test", "--type", "api_key", "--stdin"])
+    capsys.readouterr()
+    cli.main(["doctor"])
+    out = capsys.readouterr().out
+    assert "1 entries" in out or "1 entry" in out

@@ -452,6 +452,55 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     else:
         print("KEYS_KEEPER_ALLOW_REVEAL: ⚠ not set — `keys reveal` will refuse to print plaintext")
         print("  add `export KEYS_KEEPER_ALLOW_REVEAL=1` to ~/.zshrc to enable")
+
+    # data.json validity + entry count
+    try:
+        store = MetadataStore(paths)
+        entries = store.list()
+        print(f"data.json:    ✓ {len(entries)} entries")
+    except Exception as ex:
+        print(f"data.json:    ✗ ERROR — {ex}")
+        return 0
+
+    # ref integrity
+    from keys_keeper.refs import detect_cycles, RefCycleError
+    try:
+        detect_cycles(entries)
+        print("refs:         ✓ no cycles")
+    except RefCycleError as ex:
+        print(f"refs:         ✗ {ex}")
+
+    # orphan refs (target missing)
+    by_name = {e.name for e in entries}
+    orphans = []
+    for e in entries:
+        for r in e.refs:
+            if r.get("name") not in by_name:
+                orphans.append((e.name, r.get("name")))
+    if orphans:
+        print(f"refs:         ⚠ {len(orphans)} orphan ref(s):")
+        for src, tgt in orphans:
+            print(f"   {src} → {tgt} (missing)")
+    else:
+        print("refs:         ✓ all targets exist")
+
+    # keychain orphans (account exists but no metadata) and missing (metadata but no keychain)
+    try:
+        kc_ids = set(_backend().list_ids())
+    except Exception:
+        kc_ids = None
+    if kc_ids is not None:
+        meta_ids = {e.id for e in entries}
+        # passphrase variants
+        meta_ids |= {e.id + ":passphrase" for e in entries if e.type.value == "ssh_key"}
+        kc_orphans = kc_ids - meta_ids
+        meta_orphans = {e.id for e in entries if e.type.value in ("api_key", "ssh_key", "note") and e.id not in kc_ids}
+        if kc_orphans:
+            print(f"keychain:     ⚠ {len(kc_orphans)} keychain entry/entries without metadata")
+        if meta_orphans:
+            print(f"keychain:     ⚠ {len(meta_orphans)} metadata entry/entries missing keychain blobs")
+        if not kc_orphans and not meta_orphans:
+            print("keychain:     ✓ in sync with metadata")
     return 0
 
 
