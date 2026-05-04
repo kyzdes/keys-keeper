@@ -74,6 +74,9 @@ def handle_api(handler, *, paths: Paths, method: str, path: str, body: bytes | N
         entry_id = route[len("/api/entries/"):-len("/replace-secret")]
         return _replace_secret(handler, paths, entry_id, body)
 
+    if route == "/api/status" and method == "GET":
+        return _status(handler, paths)
+
     handler._send_json(404, {"error": "not found"})
 
 
@@ -261,6 +264,20 @@ def _bulk_import(handler, paths: Paths, query: str, body: bytes) -> None:
             backend.set(entry.id, r.value)
         audit.record(op="add", name=entry.name, id_=entry.id, success=True)
     handler._send_json(200, {"ok": True, "imported": len(rows)})
+
+
+def _status(handler, paths: Paths) -> None:
+    import os, time
+    from keys_keeper import __version__
+    info = {
+        "version": __version__,
+        "config_dir": str(paths.root),
+        "data_json": str(paths.data_json),
+        "audit_jsonl": str(paths.audit_jsonl),
+        "reveal_env_set": os.environ.get("KEYS_KEEPER_ALLOW_REVEAL") == "1",
+        "uptime_sec": int(time.monotonic() - getattr(handler.server, "_kk_started", time.monotonic())),
+    }
+    handler._send_json(200, info)
 
 
 def _replace_secret(handler, paths: Paths, entry_id: str, body: bytes) -> None:

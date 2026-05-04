@@ -36,6 +36,7 @@ class AdminServer:
     def serve_forever(self) -> None:
         handler_cls = make_handler(self)
         self._server = ThreadingHTTPServer(("127.0.0.1", self.requested_port), handler_cls)
+        self._server._kk_started = time.monotonic()
         self.bound_port = self._server.server_port
         threading.Thread(target=self._idle_watchdog, daemon=True).start()
         self._server.serve_forever()
@@ -143,6 +144,10 @@ def make_handler(admin: "AdminServer"):
             if path == "/audit":
                 from keys_keeper.pages import render_audit
                 self._send(200, render_audit(paths=paths, token=admin.token).encode("utf-8"))
+                return
+            if path == "/settings":
+                from keys_keeper.pages import render_settings
+                self._send(200, render_settings(paths=paths, token=admin.token).encode("utf-8"))
                 return
             if path.startswith("/static/"):
                 self._serve_static(path)

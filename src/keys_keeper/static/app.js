@@ -649,4 +649,30 @@
 
     load();
   }
+
+  if (document.querySelector('.settings-shell')) {
+    api('/api/status').then(s => {
+      document.getElementById('status-body').innerHTML = `
+        <div class="kv-row"><span class="key">version</span><span class="val">${s.version}</span></div>
+        <div class="kv-row"><span class="key">port</span><span class="val">${location.port}</span></div>
+        <div class="kv-row"><span class="key">uptime</span><span class="val">${Math.floor(s.uptime_sec / 60)} min ${s.uptime_sec % 60} s</span></div>
+        <div class="kv-row"><span class="key">config_dir</span><span class="val mono">${s.config_dir}</span></div>
+      `;
+      document.getElementById('security-body').innerHTML = `
+        <div class="kv-row"><span class="key">KEYS_KEEPER_ALLOW_REVEAL</span><span class="val ${s.reveal_env_set ? 'success' : 'danger'}">${s.reveal_env_set ? '✓ set' : '✗ not set'}</span></div>
+        <div class="kv-row"><span class="key">URL token</span><span class="val success">✓ active · stripped from history</span></div>
+        ${s.reveal_env_set ? '' : `
+        <div style="margin-top:14px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:5px;font-family:'JetBrains Mono',monospace;font-size:11px;line-height:1.6">
+          <div style="color:var(--text-4);margin-bottom:4px"># add to ~/.zshrc to enable</div>
+          <div style="color:var(--accent)">export KEYS_KEEPER_ALLOW_REVEAL=1</div>
+        </div>`}
+      `;
+    });
+
+    document.getElementById('shutdown-btn').onclick = async () => {
+      if (!confirm('Shutdown the server now?')) return;
+      await api('/api/shutdown', { method: 'POST' });
+      document.body.innerHTML = '<div class="curtain"><div class="glyph">K</div><div class="title">Server stopped</div><div class="sub">Re-run <span class="mono">keys serve</span> to restart.</div></div>';
+    };
+  }
 })();
