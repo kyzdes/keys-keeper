@@ -1046,7 +1046,12 @@ body {
 .bulk-savebar .summary .err { color: var(--danger); }
 
 /* ========== AUDIT (S5) ========== */
-.audit-shell { padding: 18px 24px; }
+.audit-shell {
+  padding: 18px 24px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
 .charts-row {
   display: grid;
   grid-template-columns: 1.2fr 1.4fr 1fr;
@@ -1162,7 +1167,13 @@ body {
 .audit-table .fail { color: var(--danger); }
 
 /* ========== SETTINGS (S6) ========== */
-.settings-shell { padding: 22px 28px; max-width: 980px; }
+.settings-shell {
+  padding: 22px 28px;
+  max-width: 980px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
 .settings-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
