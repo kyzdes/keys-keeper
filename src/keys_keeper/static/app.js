@@ -309,4 +309,122 @@
       };
     });
   }
+
+  if (document.querySelector('.new-modal')) {
+    const modal = document.querySelector('.new-modal');
+    const editId = modal.dataset.editId;
+    let selectedType = document.querySelector('.type-card.selected')?.dataset.type || 'api_key';
+    let editingEntry = null;
+
+    if (editId) {
+      api(`/api/entries/${encodeURIComponent(editId)}`).then(e => {
+        editingEntry = e;
+        renderTypeFields();
+      });
+    } else {
+      renderTypeFields();
+    }
+
+    document.querySelectorAll('.type-card').forEach(card => {
+      card.onclick = () => {
+        if (editId) return;
+        document.querySelectorAll('.type-card').forEach(c => c.classList.remove('selected'));
+        card.classList.add('selected');
+        selectedType = card.dataset.type;
+        renderTypeFields();
+      };
+    });
+
+    function renderTypeFields() {
+      const c = document.getElementById('type-specific-fields');
+      c.innerHTML = '';
+      const e = editingEntry;
+      if (selectedType === 'api_key') {
+        c.append(formRow('service', 'service', e?.fields?.service || '', false));
+        if (!editId) c.append(secretRow('value', 'paste secret value · stays out of the DOM after submit', true));
+      } else if (selectedType === 'ssh_key') {
+        c.append(formRow('public_key', 'public key', e?.fields?.public_key || '', true));
+        if (!editId) c.append(secretRow('private_key', 'paste private key (multi-line OK)', true));
+        c.append(formRow('comment', 'comment', e?.fields?.comment || '', false));
+      } else if (selectedType === 'server') {
+        c.append(formRow('host', 'host', e?.fields?.host || '', true));
+        c.append(formRow('port', 'port', e?.fields?.port || '22', false));
+        c.append(formRow('user', 'user', e?.fields?.user || '', true));
+        c.append(formRow('auth', 'auth', e?.fields?.auth || 'ssh_key', true));
+        c.append(formRow('ssh_key_ref', 'ssh_key ref', e?.refs?.find(r => r.role === 'ssh_key')?.name || '', false));
+      } else if (selectedType === 'domain') {
+        c.append(formRow('host', 'host', e?.fields?.host || '', true));
+        c.append(formRow('registrar', 'registrar', e?.fields?.registrar || '', false));
+      } else if (selectedType === 'note') {
+        c.append(formRow('body', 'body', e?.fields?.body || '', false));
+      }
+    }
+
+    function formRow(name, label, val, req) {
+      const r = document.createElement('div'); r.className = 'form-row';
+      const lbl = document.createElement('span'); lbl.className = 'label'; lbl.textContent = label; if (req) lbl.innerHTML += ' <span class="req">*</span>';
+      const inp = document.createElement('input'); inp.className = 'text-input'; inp.id = `f-${name}`; inp.value = val;
+      r.append(lbl, inp); return r;
+    }
+    function secretRow(name, placeholder, multiline) {
+      const r = document.createElement('div'); r.className = 'form-row';
+      const lbl = document.createElement('span'); lbl.className = 'label'; lbl.innerHTML = `${name} <span class="req">*</span>`;
+      const inp = document.createElement(multiline ? 'textarea' : 'input');
+      inp.className = multiline ? 'textarea-input' : 'text-input';
+      inp.id = `f-${name}`;
+      inp.placeholder = placeholder;
+      if (multiline) inp.rows = 3;
+      r.append(lbl, inp); return r;
+    }
+
+    async function save() {
+      const errEl = document.getElementById('form-error');
+      errEl.textContent = '';
+      const payload = {
+        name: document.getElementById('f-name').value.trim(),
+        type: selectedType,
+        tags: document.getElementById('f-tags').value.split(',').map(s => s.trim()).filter(Boolean),
+        note: document.getElementById('f-note').value,
+        fields: {},
+        refs: [],
+      };
+      ['service', 'public_key', 'comment', 'host', 'port', 'user', 'auth', 'registrar', 'body'].forEach(k => {
+        const el = document.getElementById(`f-${k}`);
+        if (el) {
+          let v = el.value.trim();
+          if (k === 'port' && v) v = parseInt(v);
+          if (v) payload.fields[k] = v;
+        }
+      });
+      const refEl = document.getElementById('f-ssh_key_ref');
+      if (refEl?.value.trim()) payload.refs.push({ role: 'ssh_key', name: refEl.value.trim() });
+      const valueEl = document.getElementById('f-value') || document.getElementById('f-private_key');
+      if (valueEl) payload.value = valueEl.value;
+
+      try {
+        if (editId) {
+          await api(`/api/entries/${encodeURIComponent(editId)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          location.href = `/entry/${encodeURIComponent(editId)}`;
+        } else {
+          const r = await api('/api/entries', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          location.href = `/entry/${encodeURIComponent(r.id)}`;
+        }
+      } catch (ex) {
+        errEl.textContent = ex.message;
+      }
+    }
+
+    document.getElementById('save-btn').onclick = save;
+    document.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); save(); }
+    });
+  }
 })();

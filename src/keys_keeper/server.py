@@ -110,6 +110,20 @@ def make_handler(admin: "AdminServer"):
                 from keys_keeper.api import handle_api
                 handle_api(self, paths=paths, method="GET", path=path, body=None)
                 return
+            if path == "/new":
+                from keys_keeper.pages import render_new_edit
+                self._send(200, render_new_edit(paths=paths, token=admin.token).encode("utf-8"))
+                return
+            if path.startswith("/entry/") and path.endswith("/edit"):
+                from keys_keeper.pages import render_new_edit
+                from keys_keeper.store import MetadataStore
+                eid = path[len("/entry/"):-len("/edit")]
+                e = MetadataStore(paths).get_by_id(eid) or MetadataStore(paths).get_by_name(eid)
+                if e is None:
+                    self._send(404, b"entry not found")
+                    return
+                self._send(200, render_new_edit(paths=paths, token=admin.token, entry=e).encode("utf-8"))
+                return
             if path.startswith("/entry/"):
                 entry_id = path[len("/entry/"):]
                 from keys_keeper.pages import render_entry_detail
@@ -144,6 +158,16 @@ def make_handler(admin: "AdminServer"):
                 return
             from keys_keeper.api import handle_api
             handle_api(self, paths=paths, method="DELETE", path=urlparse(self.path).path, body=None)
+
+        def do_PATCH(self) -> None:
+            admin.heartbeat()
+            if not self._verify_token():
+                self._send(403, b"forbidden")
+                return
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length) if length else b""
+            from keys_keeper.api import handle_api
+            handle_api(self, paths=paths, method="PATCH", path=urlparse(self.path).path, body=body)
 
         def _serve_static(self, path: str) -> None:
             asset = (Path(__file__).parent / path.lstrip("/")).resolve()

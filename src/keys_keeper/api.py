@@ -42,6 +42,11 @@ def handle_api(handler, *, paths: Paths, method: str, path: str, body: bytes | N
         return
     if route == "/api/audit" and method == "GET":
         return _audit(handler, paths, parsed.query)
+    if route == "/api/entries" and method == "POST":
+        return _create_entry(handler, paths, body)
+    if route.startswith("/api/entries/") and method == "PATCH":
+        entry_id = route.rsplit("/", 1)[-1]
+        return _patch_entry(handler, paths, entry_id, body)
     if route.startswith("/api/entries/") and method == "DELETE":
         entry_id = route.rsplit("/", 1)[-1]
         store = MetadataStore(paths)
@@ -139,6 +144,61 @@ def _audit(handler, paths: Paths, query: str) -> None:
     audit = AuditLog(paths)
     events = list(audit.search(op=op, name=name, limit=limit))
     handler._send_json(200, {"events": events})
+
+
+def _create_entry(handler, paths: Paths, body: bytes) -> None:
+    payload = json.loads(body or b"{}")
+    from keys_keeper.models import Entry, EntryType, ValidationError
+    try:
+        type_ = EntryType(payload["type"])
+        e = Entry.new(
+            name=payload["name"],
+            type=type_,
+            fields=payload.get("fields", {}),
+            tags=payload.get("tags", []),
+            note=payload.get("note", ""),
+            refs=payload.get("refs", []),
+        )
+    except (ValidationError, KeyError, ValueError) as ex:
+        handler._send_json(400, {"error": str(ex)})
+        return
+    store = MetadataStore(paths)
+    audit = AuditLog(paths)
+    backend = _backend()
+    try:
+        store.add(e)
+    except Exception as ex:
+        handler._send_json(409, {"error": str(ex)})
+        return
+    if payload.get("value"):
+        backend.set(e.id, payload["value"])
+    audit.record(op="add", name=e.name, id_=e.id, success=True)
+    handler._send_json(201, {"id": e.id, "name": e.name})
+
+
+def _patch_entry(handler, paths: Paths, entry_id: str, body: bytes) -> None:
+    payload = json.loads(body or b"{}")
+    store = MetadataStore(paths)
+    audit = AuditLog(paths)
+    e = store.get_by_id(entry_id)
+    if e is None:
+        handler._send_json(404, {"error": "not found"})
+        return
+    if "tags" in payload:
+        e.tags = list(payload["tags"])
+    if "note" in payload:
+        e.note = payload["note"]
+    if "fields" in payload:
+        e.fields = {**e.fields, **payload["fields"]}
+    if "refs" in payload:
+        e.refs = list(payload["refs"])
+    from keys_keeper.models import _now_iso
+    e.updated_at = _now_iso()
+    store.update(e)
+    if payload.get("value"):
+        _backend().set(e.id, payload["value"])
+    audit.record(op="update", name=e.name, id_=e.id, success=True)
+    handler._send_json(200, {"ok": True})
 
 
 def _shutdown_self() -> None:
