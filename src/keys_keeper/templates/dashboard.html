@@ -1,10 +1,24 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="dash-toolbar">
-  <div class="search-input">
+  <div class="search-input" id="search-shell">
     <input id="search" placeholder="Search by name, tag, or note · / to focus" autofocus>
     <span class="kbd">/</span>
   </div>
 </div>
-<div id="entries-mount">Loading…</div>
+<div class="tag-rail" id="tag-rail">
+  <span class="label">FILTER</span>
+  {# tags rendered dynamically by JS once entries load #}
+</div>
+<div class="app-content" id="dashboard-content">
+  <div class="unified-table-head" data-grouping="unified">
+    <span></span>
+    <span>type</span>
+    <span>name · tags</span>
+    <span>note</span>
+    <span>last access</span>
+    <span></span>
+  </div>
+  <div id="entries-mount">Loading…</div>
+</div>
 {% endblock %}
