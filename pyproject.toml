@@ -25,6 +25,10 @@ keys = "keys_keeper.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/keys_keeper"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"src/keys_keeper/templates" = "keys_keeper/templates"
+"src/keys_keeper/static" = "keys_keeper/static"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --strict-markers"

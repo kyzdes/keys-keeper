@@ -55,8 +55,10 @@ def test_initial_html_response_includes_token_in_query(admin):
     resp = _fetch(url)
     assert resp.status == 200
     body = resp.read().decode("utf-8")
-    assert admin.token in body
-    # the JS should contain history.replaceState to strip the token
+    # the JS should grab the token from location.search and stash it in sessionStorage,
+    # then strip it from the URL via history.replaceState.
+    assert "URLSearchParams" in body
+    assert "sessionStorage" in body
     assert "history.replaceState" in body or "replaceState" in body
 
 

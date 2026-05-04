@@ -473,6 +473,22 @@ def cmd_ssh(args: argparse.Namespace) -> int:
     return rc
 
 
+def cmd_serve(args: argparse.Namespace) -> int:
+    from keys_keeper.server import AdminServer
+    paths = Paths()
+    paths.ensure()
+    server = AdminServer(paths=paths, port=args.port, idle_timeout_sec=15 * 60)
+    url = f"http://127.0.0.1:{args.port or 7777}/?t={server.token}"
+    print(f"keys-keeper admin starting on {url}")
+    if not args.no_open:
+        subprocess.Popen(["open", url])
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        server.stop()
+    return 0
+
+
 # ----- top-level parser -----
 
 def build_parser() -> argparse.ArgumentParser:
@@ -558,6 +574,11 @@ def build_parser() -> argparse.ArgumentParser:
     sh.add_argument("name")
     sh.add_argument("--cmd", help="run a one-shot command instead of interactive shell")
     sh.set_defaults(func=cmd_ssh)
+
+    sv = sub.add_parser("serve", help="run the local web admin")
+    sv.add_argument("--port", type=int, default=7777)
+    sv.add_argument("--no-open", action="store_true")
+    sv.set_defaults(func=cmd_serve)
 
     return p
 
