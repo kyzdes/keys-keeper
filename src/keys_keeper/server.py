@@ -136,7 +136,8 @@ def make_handler(admin: "AdminServer"):
                 return
             if path.startswith("/api/"):
                 from keys_keeper.api import handle_api
-                handle_api(self, paths=paths, method="GET", path=path, body=None)
+                # pass full self.path (with query) so /api/audit?limit=… etc work
+                handle_api(self, paths=paths, method="GET", path=self.path, body=None)
                 return
             if path == "/new":
                 from keys_keeper.pages import render_new_edit
@@ -191,7 +192,7 @@ def make_handler(admin: "AdminServer"):
             length = int(self.headers.get("Content-Length", "0"))
             body = self.rfile.read(length) if length else b""
             from keys_keeper.api import handle_api
-            handle_api(self, paths=paths, method="POST", path=urlparse(self.path).path, body=body)
+            handle_api(self, paths=paths, method="POST", path=self.path, body=body)
 
         def do_DELETE(self) -> None:
             admin.heartbeat()
@@ -199,7 +200,7 @@ def make_handler(admin: "AdminServer"):
                 self._send(403, b"forbidden")
                 return
             from keys_keeper.api import handle_api
-            handle_api(self, paths=paths, method="DELETE", path=urlparse(self.path).path, body=None)
+            handle_api(self, paths=paths, method="DELETE", path=self.path, body=None)
 
         def do_PATCH(self) -> None:
             admin.heartbeat()
@@ -209,7 +210,7 @@ def make_handler(admin: "AdminServer"):
             length = int(self.headers.get("Content-Length", "0"))
             body = self.rfile.read(length) if length else b""
             from keys_keeper.api import handle_api
-            handle_api(self, paths=paths, method="PATCH", path=urlparse(self.path).path, body=body)
+            handle_api(self, paths=paths, method="PATCH", path=self.path, body=body)
 
         def _serve_static(self, path: str) -> None:
             asset = (Path(__file__).parent / path.lstrip("/")).resolve()
