@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -226,6 +227,202 @@ def cmd_copy(args: argparse.Namespace) -> int:
     return 0
 
 
+# inject
+def cmd_inject(args: argparse.Namespace) -> int:
+    paths = Paths()
+    store = MetadataStore(paths)
+    audit = AuditLog(paths)
+    e = store.get_by_name(args.name)
+    if e is None:
+        sys.stderr.write(f"no entry named {args.name!r}\n")
+        return 1
+    backend = _backend()
+    value = backend.get(e.id)
+    target = Path(args.file)
+    if target.exists():
+        existing = target.read_text()
+        existing_lines = existing.splitlines()
+        match_idx = None
+        for i, line in enumerate(existing_lines):
+            if line.startswith(f"{args.as_env}="):
+                match_idx = i
+                break
+        if match_idx is not None:
+            if not args.replace:
+                sys.stderr.write(
+                    f"error: {args.as_env} already exists in {target} "
+                    f"(use --replace to overwrite)\n"
+                )
+                return 1
+            existing_lines[match_idx] = f"{args.as_env}={value}"
+            new_content = "\n".join(existing_lines) + ("\n" if existing.endswith("\n") else "")
+        else:
+            sep = "" if existing.endswith("\n") or not existing else "\n"
+            new_content = existing + sep + f"{args.as_env}={value}\n"
+    else:
+        new_content = f"{args.as_env}={value}\n"
+    target.write_text(new_content)
+    audit.record(op="inject", name=e.name, id_=e.id, file_target=str(target), success=True)
+    print(f"injected {e.name} → {target} as {args.as_env}")
+    return 0
+
+
+# resolve
+_RESOLVE_RE = re.compile(r"__KEYS:([a-z0-9][a-z0-9._-]*[a-z0-9])(?::([a-z_]+))?__")
+
+
+def cmd_resolve(args: argparse.Namespace) -> int:
+    paths = Paths()
+    store = MetadataStore(paths)
+    audit = AuditLog(paths)
+    backend = _backend()
+    target = Path(args.file)
+    content = target.read_text()
+    errors = []
+    count = 0
+
+    def replace(match: re.Match) -> str:
+        nonlocal count
+        name = match.group(1)
+        field_name = match.group(2)
+        e = store.get_by_name(name)
+        if e is None:
+            errors.append(f"unknown entry: {name}")
+            return match.group(0)
+        if field_name:
+            v = e.fields.get(field_name)
+            if v is None:
+                errors.append(f"entry {name} has no field {field_name}")
+                return match.group(0)
+            count += 1
+            return str(v)
+        else:
+            count += 1
+            try:
+                return backend.get(e.id)
+            except Exception as ex:
+                errors.append(f"keychain miss for {name}: {ex}")
+                return match.group(0)
+
+    new_content = _RESOLVE_RE.sub(replace, content)
+    if errors:
+        sys.stderr.write("error: resolve failed:\n")
+        for err in errors:
+            sys.stderr.write(f"  - {err}\n")
+        return 1
+    target.write_text(new_content)
+    audit.record(op="resolve", name="<file>", id_=str(target), file_target=str(target), success=True)
+    print(f"resolved {count} placeholder(s) in {target}")
+    return 0
+
+
+# rm
+def cmd_rm(args: argparse.Namespace) -> int:
+    paths = Paths()
+    store = MetadataStore(paths)
+    audit = AuditLog(paths)
+    e = store.get_by_name(args.name)
+    if e is None:
+        sys.stderr.write(f"no entry named {args.name!r}\n")
+        return 1
+    # check reverse refs
+    dependents = [
+        x for x in store.list()
+        if any(r.get("name") == e.name for r in x.refs)
+    ]
+    if dependents and not args.cascade:
+        sys.stderr.write(
+            f"error: {e.name} is referenced by: {[d.name for d in dependents]}. "
+            f"Use --cascade to remove the references too.\n"
+        )
+        return 1
+    if dependents and args.cascade:
+        for d in dependents:
+            d.refs = [r for r in d.refs if r.get("name") != e.name]
+            store.update(d)
+    store.delete_by_name(args.name)
+    backend = _backend()
+    backend.delete(e.id)
+    backend.delete(e.id + ":passphrase")  # in case ssh_key had passphrase
+    audit.record(op="delete", name=e.name, id_=e.id, success=True)
+    print(f"removed {e.name}")
+    return 0
+
+
+# edit
+def cmd_edit(args: argparse.Namespace) -> int:
+    paths = Paths()
+    store = MetadataStore(paths)
+    audit = AuditLog(paths)
+    e = store.get_by_name(args.name)
+    if e is None:
+        sys.stderr.write(f"no entry named {args.name!r}\n")
+        return 1
+    if args.add_tag:
+        for t in args.add_tag:
+            if t not in e.tags:
+                e.tags.append(t)
+    if args.rm_tag:
+        e.tags = [t for t in e.tags if t not in args.rm_tag]
+    if args.note is not None:
+        e.note = args.note
+    if args.field:
+        for kv in args.field:
+            k, _, v = kv.partition("=")
+            if not _:
+                sys.stderr.write(f"--field expects KEY=VALUE, got {kv!r}\n")
+                return 2
+            e.fields[k] = v
+    if args.ref:
+        for kv in args.ref:
+            role, _, name = kv.partition("=")
+            if not _:
+                sys.stderr.write(f"--ref expects ROLE=NAME, got {kv!r}\n")
+                return 2
+            e.refs = [r for r in e.refs if r.get("role") != role]
+            e.refs.append({"role": role, "name": name})
+    if args.new_name:
+        try:
+            from keys_keeper.models import validate_name
+            validate_name(args.new_name)
+        except Exception as ex:
+            sys.stderr.write(f"error: {ex}\n")
+            return 2
+        if store.get_by_name(args.new_name) is not None:
+            sys.stderr.write(f"error: name {args.new_name!r} already taken\n")
+            return 1
+        e.name = args.new_name
+    e.updated_at = __import__("keys_keeper.models", fromlist=["_now_iso"])._now_iso()
+    store.update(e)
+    audit.record(op="update", name=e.name, id_=e.id, success=True)
+    print(f"updated {e.name}")
+    return 0
+
+
+# doctor
+def cmd_doctor(args: argparse.Namespace) -> int:
+    paths = Paths()
+    paths.ensure()
+    print(f"keys-keeper {__version__}")
+    print(f"config dir: {paths.root}")
+    print(f"  data.json:    {'exists' if paths.data_json.exists() else 'will be created on first add'}")
+    print(f"  audit.jsonl:  {'exists' if paths.audit_jsonl.exists() else '(none yet)'}")
+    print(f"  config.toml:  {'exists' if paths.config_toml.exists() else '(default)'}")
+    # keychain access probe
+    try:
+        backend = _backend()
+        backend.list_ids()
+        print("keychain:     ✓ accessible")
+    except Exception as ex:
+        print(f"keychain:     ✗ ERROR — {ex}")
+    if os.environ.get("KEYS_KEEPER_ALLOW_REVEAL") == "1":
+        print("KEYS_KEEPER_ALLOW_REVEAL: ✓ set")
+    else:
+        print("KEYS_KEEPER_ALLOW_REVEAL: ⚠ not set — `keys reveal` will refuse to print plaintext")
+        print("  add `export KEYS_KEEPER_ALLOW_REVEAL=1` to ~/.zshrc to enable")
+    return 0
+
+
 # ----- top-level parser -----
 
 def build_parser() -> argparse.ArgumentParser:
@@ -270,6 +467,40 @@ def build_parser() -> argparse.ArgumentParser:
     cp.add_argument("name")
     cp.add_argument("--clear-after", type=int, default=30, help="seconds before auto-clear (0 = never)")
     cp.set_defaults(func=cmd_copy)
+
+    # inject
+    inj = sub.add_parser("inject", help="append ENV=value to a file")
+    inj.add_argument("name")
+    inj.add_argument("--file", required=True)
+    inj.add_argument("--as", dest="as_env", required=True, metavar="ENV_NAME")
+    inj.add_argument("--replace", action="store_true")
+    inj.set_defaults(func=cmd_inject)
+
+    # resolve
+    rs = sub.add_parser("resolve", help="replace __KEYS:name__ placeholders in a file")
+    rs.add_argument("file")
+    rs.set_defaults(func=cmd_resolve)
+
+    # rm
+    rm = sub.add_parser("rm", help="delete an entry")
+    rm.add_argument("name")
+    rm.add_argument("--cascade", action="store_true")
+    rm.set_defaults(func=cmd_rm)
+
+    # edit
+    ed = sub.add_parser("edit", help="modify entry metadata")
+    ed.add_argument("name")
+    ed.add_argument("--name", dest="new_name")
+    ed.add_argument("--add-tag", action="append", default=[])
+    ed.add_argument("--rm-tag", action="append", default=[])
+    ed.add_argument("--note", default=None)
+    ed.add_argument("--field", action="append", default=[], help="KEY=VALUE")
+    ed.add_argument("--ref", action="append", default=[], help="ROLE=NAME")
+    ed.set_defaults(func=cmd_edit)
+
+    # doctor
+    dr = sub.add_parser("doctor", help="health check + paths")
+    dr.set_defaults(func=cmd_doctor)
 
     return p
 
