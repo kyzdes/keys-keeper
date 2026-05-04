@@ -165,9 +165,77 @@
     }
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
       e.preventDefault();
-      document.getElementById('search')?.focus();
+      paletteOpen();
     }
   });
+
+  // -- command palette --
+  const palette = {
+    open: false,
+    query: '',
+    selectedIdx: 0,
+    items: [],
+  };
+
+  async function paletteOpen() {
+    palette.open = true;
+    palette.query = '';
+    palette.selectedIdx = 0;
+    document.getElementById('cmdk-overlay').hidden = false;
+    document.getElementById('cmdk-input').value = '';
+    document.getElementById('cmdk-input').focus();
+    if (state.entries.length === 0) {
+      try {
+        const r = await api('/api/entries');
+        state.entries = r.entries;
+      } catch {}
+    }
+    paletteRender();
+  }
+  function paletteClose() {
+    palette.open = false;
+    document.getElementById('cmdk-overlay').hidden = true;
+  }
+  function paletteRender() {
+    const q = palette.query.toLowerCase();
+    palette.items = state.entries
+      .filter(e => !q || e.name.toLowerCase().includes(q) || (e.tags || []).some(t => t.toLowerCase().includes(q)))
+      .slice(0, 20);
+    if (palette.selectedIdx >= palette.items.length) palette.selectedIdx = Math.max(0, palette.items.length - 1);
+    const r = document.getElementById('cmdk-results');
+    r.innerHTML = '';
+    palette.items.forEach((e, i) => {
+      const meta = TYPE_META[e.type] || {};
+      const row = el('div', {
+        class: 'cmdk-row' + (i === palette.selectedIdx ? ' selected' : ''),
+        onclick: () => { paletteClose(); location.href = `/entry/${encodeURIComponent(e.id)}`; },
+      });
+      row.append(
+        el('span', { class: 'type-icon', style: `background:${meta.color};color:var(--bg);font-weight:700;display:inline-flex;align-items:center;justify-content:center;border-radius:4px` }, meta.short || '?'),
+        el('span', { class: 'name', style: 'flex:1' }, e.name),
+        el('span', { style: 'color:var(--text-3);font-size:11px' }, e.type),
+      );
+      r.append(row);
+    });
+  }
+
+  document.getElementById('cmdk-input').addEventListener('input', (e) => {
+    palette.query = e.target.value;
+    palette.selectedIdx = 0;
+    paletteRender();
+  });
+  document.getElementById('cmdk-input').addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); palette.selectedIdx = Math.min(palette.items.length - 1, palette.selectedIdx + 1); paletteRender(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); palette.selectedIdx = Math.max(0, palette.selectedIdx - 1); paletteRender(); }
+    else if (e.key === 'Enter') {
+      e.preventDefault();
+      const sel = palette.items[palette.selectedIdx];
+      if (sel) { paletteClose(); location.href = `/entry/${encodeURIComponent(sel.id)}`; }
+    }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); paletteClose(); }
+  });
+
+  document.getElementById('cmdk-trigger')?.addEventListener('click', paletteOpen);
 
   setInterval(() => {
     fetch('/api/heartbeat', { method: 'POST', headers: { 'Sec-Keys-Token': TOKEN } });
