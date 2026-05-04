@@ -1,6 +1,7 @@
 """keys CLI — argparse routing + subcommand dispatch."""
 from __future__ import annotations
 import argparse
+import getpass
 import hashlib
 import os
 import re
@@ -489,6 +490,82 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_export(args: argparse.Namespace) -> int:
+    paths = Paths()
+    store = MetadataStore(paths)
+    backend = _backend()
+    audit = AuditLog(paths)
+    pw = getpass.getpass("Export password: ")
+    pw2 = getpass.getpass("Confirm: ")
+    if pw != pw2:
+        sys.stderr.write("passwords do not match\n")
+        return 1
+    payload = {
+        "schema_version": 1,
+        "entries": [],
+    }
+    for e in store.list():
+        rec = e.to_dict()
+        rec["_secret"] = None
+        rec["_secret_passphrase"] = None
+        try:
+            rec["_secret"] = backend.get(e.id)
+        except Exception:
+            pass
+        try:
+            rec["_secret_passphrase"] = backend.get(e.id + ":passphrase")
+        except Exception:
+            pass
+        payload["entries"].append(rec)
+    from keys_keeper.crypto import encrypt_blob
+    import json as _json
+    blob = encrypt_blob(_json.dumps(payload).encode("utf-8"), password=pw)
+    Path(args.file).write_bytes(blob)
+    audit.record(op="export", name="<all>", id_="-", file_target=args.file, success=True)
+    print(f"exported {len(payload['entries'])} entries to {args.file}")
+    return 0
+
+
+def cmd_import(args: argparse.Namespace) -> int:
+    from keys_keeper.crypto import decrypt_blob, BadPassword
+    import json as _json
+    paths = Paths()
+    paths.ensure()
+    pw = getpass.getpass("Import password: ")
+    blob = Path(args.file).read_bytes()
+    try:
+        raw = decrypt_blob(blob, password=pw)
+    except BadPassword as ex:
+        sys.stderr.write(f"error: {ex}\n")
+        return 1
+    payload = _json.loads(raw)
+    store = MetadataStore(paths)
+    backend = _backend()
+    audit = AuditLog(paths)
+    existing = {e.name for e in store.list()}
+    imported = 0
+    for rec in payload["entries"]:
+        secret = rec.pop("_secret", None)
+        passphrase = rec.pop("_secret_passphrase", None)
+        from keys_keeper.models import Entry
+        e = Entry.from_dict(rec)
+        if e.name in existing:
+            if args.replace:
+                store.replace_by_name(e)
+            else:
+                continue
+        else:
+            store.add(e)
+        if secret:
+            backend.set(e.id, secret)
+        if passphrase:
+            backend.set(e.id + ":passphrase", passphrase)
+        imported += 1
+    audit.record(op="import", name="<all>", id_="-", file_target=args.file, success=True)
+    print(f"imported {imported} entries")
+    return 0
+
+
 # ----- top-level parser -----
 
 def build_parser() -> argparse.ArgumentParser:
@@ -579,6 +656,16 @@ def build_parser() -> argparse.ArgumentParser:
     sv.add_argument("--port", type=int, default=7777)
     sv.add_argument("--no-open", action="store_true")
     sv.set_defaults(func=cmd_serve)
+
+    ex = sub.add_parser("export", help="encrypted backup to file")
+    ex.add_argument("file")
+    ex.set_defaults(func=cmd_export)
+
+    im = sub.add_parser("import", help="restore from encrypted backup")
+    im.add_argument("file")
+    im.add_argument("--replace", action="store_true", help="overwrite existing names")
+    im.add_argument("--merge", action="store_true", help="(default) skip name collisions")
+    im.set_defaults(func=cmd_import)
 
     return p
 
