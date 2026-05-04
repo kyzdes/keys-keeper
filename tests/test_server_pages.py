@@ -56,3 +56,11 @@ def test_app_js_fetches_entries_with_token(admin):
     js = _get(admin, "/static/app.js")
     assert "fetch" in js or "XMLHttpRequest" in js
     assert "Sec-Keys-Token" in js or "kk_token" in js
+
+
+def test_entry_detail_renders(admin, monkeypatch):
+    _seed(monkeypatch, "detail-target")
+    body = _get(admin, f"/entry/detail-target")
+    assert "detail-target" in body
+    assert "Copy value" in body
+    assert "Linked entries" in body or "fields-mount" in body

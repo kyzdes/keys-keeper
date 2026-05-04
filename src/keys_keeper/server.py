@@ -110,6 +110,18 @@ def make_handler(admin: "AdminServer"):
                 from keys_keeper.api import handle_api
                 handle_api(self, paths=paths, method="GET", path=path, body=None)
                 return
+            if path.startswith("/entry/"):
+                entry_id = path[len("/entry/"):]
+                from keys_keeper.pages import render_entry_detail
+                from keys_keeper.store import MetadataStore
+                store = MetadataStore(paths)
+                e = store.get_by_id(entry_id) or store.get_by_name(entry_id)
+                if e is None:
+                    self._send(404, b"entry not found")
+                    return
+                html = render_entry_detail(paths=paths, token=admin.token, entry=e)
+                self._send(200, html.encode("utf-8"))
+                return
             if path.startswith("/static/"):
                 self._serve_static(path)
                 return
@@ -124,6 +136,14 @@ def make_handler(admin: "AdminServer"):
             body = self.rfile.read(length) if length else b""
             from keys_keeper.api import handle_api
             handle_api(self, paths=paths, method="POST", path=urlparse(self.path).path, body=body)
+
+        def do_DELETE(self) -> None:
+            admin.heartbeat()
+            if not self._verify_token():
+                self._send(403, b"forbidden")
+                return
+            from keys_keeper.api import handle_api
+            handle_api(self, paths=paths, method="DELETE", path=urlparse(self.path).path, body=None)
 
         def _serve_static(self, path: str) -> None:
             asset = (Path(__file__).parent / path.lstrip("/")).resolve()

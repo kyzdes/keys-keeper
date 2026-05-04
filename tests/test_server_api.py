@@ -103,3 +103,17 @@ def test_api_audit_returns_recent_events(admin, monkeypatch):
     resp = _get(admin, "/api/audit?limit=10")
     events = json.loads(resp.read())["events"]
     assert any(e["name"] == "audit-target" for e in events)
+
+
+def test_api_delete_entry(admin, monkeypatch):
+    _seed(monkeypatch, "to-del")
+    entries = json.loads(_get(admin, "/api/entries").read())["entries"]
+    eid = next(e["id"] for e in entries if e["name"] == "to-del")
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{admin.bound_port}/api/entries/{eid}",
+        method="DELETE",
+    )
+    req.add_header("Sec-Keys-Token", admin.token)
+    urllib.request.urlopen(req).read()
+    after = json.loads(_get(admin, "/api/entries").read())["entries"]
+    assert all(e["name"] != "to-del" for e in after)

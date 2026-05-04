@@ -42,6 +42,25 @@ def handle_api(handler, *, paths: Paths, method: str, path: str, body: bytes | N
         return
     if route == "/api/audit" and method == "GET":
         return _audit(handler, paths, parsed.query)
+    if route.startswith("/api/entries/") and method == "DELETE":
+        entry_id = route.rsplit("/", 1)[-1]
+        store = MetadataStore(paths)
+        audit = AuditLog(paths)
+        e = store.get_by_id(entry_id) or store.get_by_name(entry_id)
+        if e is None:
+            handler._send_json(404, {"error": "not found"})
+            return
+        deps = [x for x in store.list() if any(r.get("name") == e.name for r in x.refs)]
+        if deps:
+            handler._send_json(409, {"error": "has dependents", "dependents": [d.name for d in deps]})
+            return
+        store.delete_by_name(e.name)
+        backend = _backend()
+        backend.delete(e.id)
+        backend.delete(e.id + ":passphrase")
+        audit.record(op="delete", name=e.name, id_=e.id, success=True)
+        handler._send_json(200, {"ok": True})
+        return
 
     handler._send_json(404, {"error": "not found"})
 

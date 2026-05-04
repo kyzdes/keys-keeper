@@ -145,7 +145,7 @@
     render();
   }
 
-  document.getElementById('search').addEventListener('input', (e) => {
+  document.getElementById('search')?.addEventListener('input', (e) => {
     state.search = e.target.value;
     render();
   });
@@ -157,11 +157,13 @@
     }
     if (e.key === 'Escape') {
       const s = document.getElementById('search');
-      if (s) s.value = '';
-      state.search = '';
-      state.activeTags.clear();
-      renderTagRail();
-      render();
+      if (s) {
+        s.value = '';
+        state.search = '';
+        state.activeTags.clear();
+        renderTagRail();
+        render();
+      }
     }
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
       e.preventDefault();
@@ -245,7 +247,66 @@
     navigator.sendBeacon('/api/shutdown');
   });
 
-  load().catch(err => {
-    document.getElementById('entries-mount').textContent = `Failed to load: ${err.message}`;
-  });
+  if (document.getElementById('entries-mount')) {
+    load().catch(err => {
+      document.getElementById('entries-mount').textContent = `Failed to load: ${err.message}`;
+    });
+  }
+
+  if (document.getElementById('detail-mount')) {
+    const id = document.getElementById('detail-mount').dataset.entryId;
+    api(`/api/entries/${encodeURIComponent(id)}`).then(e => {
+      const tagsEl = document.getElementById('detail-tags');
+      (e.tags || []).forEach(t => tagsEl.append(el('span', { class: 'tag-mini' }, t)));
+      const fm = document.getElementById('fields-mount');
+      const sec = el('div', { class: 'field-section' });
+      sec.append(el('div', { class: 'field-section-title' }, 'Fields'));
+      Object.entries(e.fields || {}).forEach(([k, v]) => {
+        const r = el('div', { class: 'field-row' });
+        r.append(el('span', { class: 'key' }, k), el('span', { class: 'value' }, String(v)), el('span'));
+        sec.append(r);
+      });
+      fm.append(sec);
+      const rm = document.getElementById('refs-mount');
+      if ((e.refs || []).length || (e.used_by || []).length) {
+        const r = el('div', { class: 'field-section' });
+        r.append(el('div', { class: 'field-section-title' }, 'Linked entries'));
+        (e.refs || []).forEach(ref => {
+          const item = el('a', { class: 'refs-item', href: `/entry/${encodeURIComponent(ref.name)}` });
+          item.append(
+            el('span', { class: 'role' }, ref.role),
+            el('div', { class: 'target' }, el('span', { class: 'name' }, ref.name)),
+            el('span', { class: 'arrow' }, '→'),
+          );
+          r.append(item);
+        });
+        if ((e.used_by || []).length) {
+          r.append(el('div', { class: 'field-section-title', style: 'margin-top:14px' }, 'Used by'));
+          e.used_by.forEach(name => {
+            const item = el('a', { class: 'refs-item', href: `/entry/${encodeURIComponent(name)}` });
+            item.append(el('span', { class: 'role' }, 'used by'), el('div', { class: 'target' }, el('span', { class: 'name' }, name)), el('span', { class: 'arrow' }, '→'));
+            r.append(item);
+          });
+        }
+        rm.append(r);
+      }
+      const audit = document.getElementById('recent-mount');
+      audit.innerHTML = '';
+      (e.recent_events || []).forEach(ev => {
+        const row = el('div', { class: 'mini-audit-row' });
+        row.append(
+          el('span', { class: 'ts' }, relTime(ev.ts)),
+          el('span', { class: `op-tag op-${ev.op}` }, ev.op),
+          el('span', { class: 'ctx' }, ev.file_target || ev.caller_path || ''),
+        );
+        audit.append(row);
+      });
+      document.getElementById('copy-btn').onclick = () => copy(e.id, e.name);
+      document.getElementById('delete-btn').onclick = async () => {
+        if (!confirm(`Delete ${e.name}?`)) return;
+        await api(`/api/entries/${encodeURIComponent(e.id)}`, { method: 'DELETE' });
+        location.href = '/';
+      };
+    });
+  }
 })();
