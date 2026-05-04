@@ -14,7 +14,13 @@ _NO_CACHE_HEADERS = {
     "Cache-Control": "no-store, no-cache, must-revalidate, private",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
-    "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'",
+    "Content-Security-Policy": (
+        "default-src 'self'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "script-src 'self' 'unsafe-inline'; "
+        "connect-src 'self'"
+    ),
 }
 
 
@@ -99,6 +105,11 @@ def make_handler(admin: "AdminServer"):
             admin.heartbeat()
             parsed = urlparse(self.path)
             path = parsed.path
+            # Static assets (CSS / JS) are public — they hold no secrets and the
+            # browser cannot attach our session header to <link>/<script> requests.
+            if path.startswith("/static/"):
+                self._serve_static(path)
+                return
             if not self._verify_token():
                 self._send(403, b"forbidden")
                 return
