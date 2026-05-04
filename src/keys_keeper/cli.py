@@ -62,42 +62,66 @@ def cmd_add(args: argparse.Namespace) -> int:
     store = MetadataStore(paths)
     audit = AuditLog(paths)
     backend = _backend()
+    type_ = EntryType(args.type)
 
-    value = _read_input(args)
-    if not value and not args.from_file:
-        return 2
-
+    # merge --field flags into fields dict
     fields: dict = {}
     if args.service:
         fields["service"] = args.service
-    type_ = EntryType(args.type)
+    for kv in args.field or []:
+        k, _, v = kv.partition("=")
+        if not _:
+            sys.stderr.write(f"--field expects KEY=VALUE, got {kv!r}\n")
+            return 2
+        # numeric coercion for known int fields
+        if k == "port":
+            v = int(v)
+        elif k == "secret_body":
+            v = v.lower() in ("1", "true", "yes")
+        fields[k] = v
+
+    # parse --ref flags
+    refs = []
+    for kv in args.ref or []:
+        role, _, name = kv.partition("=")
+        if not _:
+            sys.stderr.write(f"--ref expects ROLE=NAME, got {kv!r}\n")
+            return 2
+        refs.append({"role": role, "name": name})
+
+    # determine if this entry type stores a secret
+    needs_secret = type_ in (EntryType.API_KEY, EntryType.SSH_KEY) or (
+        type_ == EntryType.NOTE and fields.get("secret_body", False)
+    )
+
+    value = ""
+    if needs_secret:
+        value = _read_input(args)
+        if not value and not args.from_file:
+            return 2
+
     try:
         entry = Entry.new(
-            name=args.name,
-            type=type_,
-            fields=fields,
-            tags=args.tag or [],
-            note=args.note or "",
+            name=args.name, type=type_, fields=fields,
+            tags=args.tag or [], note=args.note or "", refs=refs,
         )
     except ValidationError as e:
         sys.stderr.write(f"error: {e}\n")
         return 2
 
     try:
-        if args.replace:
+        if args.replace and store.get_by_name(args.name):
             existing = store.get_by_name(args.name)
-            if existing:
-                entry.id = existing.id  # reuse keychain account
-                store.replace_by_name(entry)
-            else:
-                store.add(entry)
+            entry.id = existing.id
+            store.replace_by_name(entry)
         else:
             store.add(entry)
     except NameConflict as e:
         sys.stderr.write(f"error: {e}\n")
         return 1
 
-    backend.set(entry.id, value)
+    if needs_secret:
+        backend.set(entry.id, value)
     audit.record(op="add", name=entry.name, id_=entry.id, success=True)
     print(f"added {entry.type.value} '{entry.name}' (id={entry.id})")
     return 0
@@ -423,6 +447,25 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ssh(args: argparse.Namespace) -> int:
+    from keys_keeper.ssh_runner import run_ssh
+    paths = Paths()
+    store = MetadataStore(paths)
+    audit = AuditLog(paths)
+    backend = _backend()
+    e = store.get_by_name(args.name)
+    if e is None:
+        sys.stderr.write(f"no entry named {args.name!r}\n")
+        return 1
+    try:
+        rc = run_ssh(store=store, backend=backend, server_name=args.name, extra_cmd=args.cmd)
+    except ValueError as ex:
+        sys.stderr.write(f"error: {ex}\n")
+        return 1
+    audit.record(op="ssh", name=e.name, id_=e.id, success=(rc == 0))
+    return rc
+
+
 # ----- top-level parser -----
 
 def build_parser() -> argparse.ArgumentParser:
@@ -442,6 +485,8 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--tag", action="append", default=[])
     a.add_argument("--note", default="")
     a.add_argument("--replace", action="store_true")
+    a.add_argument("--field", action="append", default=[], help="KEY=VALUE")
+    a.add_argument("--ref", action="append", default=[], help="ROLE=NAME")
     a.set_defaults(func=cmd_add)
 
     # list
@@ -501,6 +546,11 @@ def build_parser() -> argparse.ArgumentParser:
     # doctor
     dr = sub.add_parser("doctor", help="health check + paths")
     dr.set_defaults(func=cmd_doctor)
+
+    sh = sub.add_parser("ssh", help="open ssh session to a server entry")
+    sh.add_argument("name")
+    sh.add_argument("--cmd", help="run a one-shot command instead of interactive shell")
+    sh.set_defaults(func=cmd_ssh)
 
     return p
 
