@@ -76,8 +76,12 @@ def make_handler(admin: "AdminServer"):
         # ---- helpers ----
 
         def _verify_token(self) -> bool:
-            # Accept token via header (fetch/XHR), session cookie (browser nav),
-            # or query string (initial HTML load with ?t=TOKEN).
+            # Accept token via header (fetch/XHR) or session cookie (browser
+            # nav). The ?t=TOKEN query form is accepted ONLY on the initial
+            # HTML bootstrap (GET / or /index.html) so that a leaked URL
+            # (screenshot, browser history sync, address-bar autocomplete,
+            # malicious extension reading window.location) cannot directly
+            # call /api/* endpoints.
             header_token = self.headers.get("Sec-Keys-Token")
             if header_token == admin.token:
                 self._auth_ok = True
@@ -88,10 +92,12 @@ def make_handler(admin: "AdminServer"):
                 if k == "kk_session" and v == admin.token:
                     self._auth_ok = True
                     return True
-            qs = parse_qs(urlparse(self.path).query)
-            if qs.get("t", [""])[0] == admin.token:
-                self._auth_ok = True
-                return True
+            parsed = urlparse(self.path)
+            if self.command == "GET" and parsed.path in ("/", "/index.html"):
+                qs = parse_qs(parsed.query)
+                if qs.get("t", [""])[0] == admin.token:
+                    self._auth_ok = True
+                    return True
             return False
 
         def _send(self, status: int, body: bytes, content_type: str = "text/html; charset=utf-8") -> None:
@@ -213,9 +219,14 @@ def make_handler(admin: "AdminServer"):
             handle_api(self, paths=paths, method="PATCH", path=self.path, body=body)
 
         def _serve_static(self, path: str) -> None:
-            asset = (Path(__file__).parent / path.lstrip("/")).resolve()
             base = (Path(__file__).parent / "static").resolve()
-            if not str(asset).startswith(str(base)) or not asset.is_file():
+            # Anchor the join from `base` so any traversal segments (../)
+            # resolve relative to the static dir, then verify containment via
+            # `is_relative_to` (NOT string prefix — `startswith` would match
+            # sibling dirs whose name begins with "static").
+            relative = path[len("/static/"):] if path.startswith("/static/") else ""
+            asset = (base / relative).resolve()
+            if not asset.is_relative_to(base) or not asset.is_file():
                 self._send(404, b"not found")
                 return
             content_type = (

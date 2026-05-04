@@ -9,3 +9,6 @@ dist/
 .coverage
 htmlcov/
 .DS_Store
+
+# Project memory for AI agents — never commit (may contain operational notes)
+context-map-*/
