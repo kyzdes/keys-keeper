@@ -615,6 +615,24 @@ def cmd_import(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_audit(args: argparse.Namespace) -> int:
+    paths = Paths()
+    audit = AuditLog(paths)
+    from datetime import datetime, timezone, timedelta
+    since = None
+    if args.since:
+        amount = int(args.since[:-1])
+        unit = args.since[-1]
+        delta = {"h": "hours", "d": "days"}[unit]
+        since = datetime.now(timezone.utc) - timedelta(**{delta: amount})
+    events = list(audit.search(op=args.op, name=args.name, since=since, limit=args.limit))
+    if args.tail:
+        events = events[-args.limit:]
+    for ev in events:
+        print(f"{ev['ts']}  {ev['op']:8s}  {ev['name']:24s}  {ev.get('file_target') or '-'}")
+    return 0
+
+
 # ----- top-level parser -----
 
 def build_parser() -> argparse.ArgumentParser:
@@ -715,6 +733,14 @@ def build_parser() -> argparse.ArgumentParser:
     im.add_argument("--replace", action="store_true", help="overwrite existing names")
     im.add_argument("--merge", action="store_true", help="(default) skip name collisions")
     im.set_defaults(func=cmd_import)
+
+    au = sub.add_parser("audit", help="show audit log")
+    au.add_argument("--name")
+    au.add_argument("--op")
+    au.add_argument("--since", help="e.g. 24h, 7d")
+    au.add_argument("--limit", type=int, default=100)
+    au.add_argument("--tail", action="store_true")
+    au.set_defaults(func=cmd_audit)
 
     return p
 
