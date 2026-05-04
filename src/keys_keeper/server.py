@@ -140,6 +140,10 @@ def make_handler(admin: "AdminServer"):
                 html = render_entry_detail(paths=paths, token=admin.token, entry=e)
                 self._send(200, html.encode("utf-8"))
                 return
+            if path == "/audit":
+                from keys_keeper.pages import render_audit
+                self._send(200, render_audit(paths=paths, token=admin.token).encode("utf-8"))
+                return
             if path.startswith("/static/"):
                 self._serve_static(path)
                 return

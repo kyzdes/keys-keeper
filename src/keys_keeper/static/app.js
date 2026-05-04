@@ -544,4 +544,109 @@
       }
     };
   }
+
+  if (document.getElementById('audit-shell')) {
+    const filters = { ops: new Set(), range: '7d' };
+
+    function rangeSeconds(r) {
+      return { '24h': 86400, '7d': 604800, '30d': 2592000 }[r] || 604800;
+    }
+
+    document.querySelectorAll('.preset-btn').forEach(b => {
+      b.onclick = () => {
+        document.querySelectorAll('.preset-btn').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        filters.range = b.dataset.range;
+        load();
+      };
+    });
+    document.querySelectorAll('.op-filter').forEach(c => {
+      c.onclick = () => {
+        c.classList.toggle('active');
+        if (filters.ops.has(c.dataset.op)) filters.ops.delete(c.dataset.op);
+        else filters.ops.add(c.dataset.op);
+        load();
+      };
+    });
+
+    async function load() {
+      const all = (await api('/api/audit?limit=2000')).events;
+      const cutoff = (Date.now() - rangeSeconds(filters.range) * 1000);
+      const inRange = all.filter(e => new Date(e.ts).getTime() >= cutoff);
+      const filtered = filters.ops.size === 0
+        ? inRange
+        : inRange.filter(e => filters.ops.has(e.op));
+
+      // top entries
+      const counts = {};
+      inRange.forEach(e => { counts[e.name] = (counts[e.name] || 0) + 1; });
+      const top = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 10);
+      const max = Math.max(...top.map(([, c]) => c), 1);
+      const topEl = document.getElementById('top-bars');
+      topEl.innerHTML = '';
+      top.forEach(([name, c]) => {
+        const r = el('div', { class: 'bar-row' });
+        r.append(
+          el('span', { class: 'name' }, name),
+          el('span', { class: 'bar-track' }, el('span', { class: 'bar-fill', style: `width:${c / max * 100}%` })),
+          el('span', { class: 'num' }, String(c)),
+        );
+        topEl.append(r);
+      });
+
+      // daily activity (locked: bar style)
+      const days = Array(30).fill(0);
+      const now = Date.now();
+      all.forEach(e => {
+        const t = new Date(e.ts).getTime();
+        const dayIdx = Math.floor((now - t) / 86400000);
+        if (dayIdx >= 0 && dayIdx < 30) days[29 - dayIdx]++;
+      });
+      const dmax = Math.max(...days, 1);
+      let svg = `<svg viewBox="0 0 300 120" preserveAspectRatio="none" style="height:120px;width:100%">`;
+      days.forEach((v, i) => {
+        const w = 300 / 30;
+        const h = (v / dmax) * 110;
+        svg += `<rect x="${i * w + 1}" y="${120 - h}" width="${w - 2}" height="${h}" fill="var(--accent)" fill-opacity="0.85"/>`;
+      });
+      svg += `<line x1="0" y1="119" x2="300" y2="119" stroke="var(--border-subtle)" stroke-width="0.5"/></svg>`;
+      document.getElementById('daily-svg').innerHTML = svg;
+      document.getElementById('daily-total').textContent = `${days.reduce((s, v) => s + v, 0)} events`;
+
+      // op-type distribution
+      const opCounts = {};
+      inRange.forEach(e => { opCounts[e.op] = (opCounts[e.op] || 0) + 1; });
+      const opPairs = Object.entries(opCounts).sort((a, b) => b[1] - a[1]);
+      const opMax = Math.max(...opPairs.map(([, c]) => c), 1);
+      const opsEl = document.getElementById('ops-bars');
+      opsEl.innerHTML = '';
+      opPairs.forEach(([op, c]) => {
+        const r = el('div', { class: 'bar-row' });
+        r.append(
+          el('span', { class: 'name' }, op),
+          el('span', { class: 'bar-track' }, el('span', { class: 'bar-fill', style: `width:${c / opMax * 100}%` })),
+          el('span', { class: 'num' }, String(c)),
+        );
+        opsEl.append(r);
+      });
+      document.getElementById('ops-total').textContent = `${inRange.length} ops`;
+
+      // table
+      const tbody = document.getElementById('audit-rows');
+      tbody.innerHTML = '';
+      filtered.slice(0, 200).forEach(e => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td class="ts">${relTime(e.ts)}</td>
+          <td><span class="op-tag op-${e.op}" style="padding:1px 7px;border-radius:3px;font-size:10px">${e.op}</span></td>
+          <td class="name"><a href="/entry/${encodeURIComponent(e.name)}">${e.name}</a></td>
+          <td class="caller">${e.caller_path || ''}</td>
+          <td class="file">${e.file_target || '—'}</td>
+          <td class="${e.success ? 'ok' : 'fail'}">${e.success ? '✓' : '✗'}</td>`;
+        tbody.append(tr);
+      });
+    }
+
+    load();
+  }
 })();
