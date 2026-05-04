@@ -75,3 +75,22 @@ def test_info_unknown_name_errors(cli_env, capsys):
     assert rc != 0
     err = capsys.readouterr().err
     assert "not found" in err.lower() or "no entry" in err.lower()
+
+
+def test_info_shows_reverse_refs(cli_env, capsys, monkeypatch):
+    monkeypatch.setattr("sys.stdin", StringIO("k\n"))
+    cli.main([
+        "add", "ref-target", "--type", "ssh_key", "--stdin",
+        "--field", "public_key=ssh-...",
+    ])
+    cli.main([
+        "add", "ref-server", "--type", "server",
+        "--from-file", "/dev/null",
+        "--field", "host=h", "--field", "user=u", "--field", "auth=ssh_key",
+        "--ref", "ssh_key=ref-target",
+    ])
+    capsys.readouterr()
+    cli.main(["info", "ref-target"])
+    out = capsys.readouterr().out
+    assert "used by" in out.lower()
+    assert "ref-server" in out

@@ -167,6 +167,13 @@ def cmd_info(args: argparse.Namespace) -> int:
         print("refs:")
         for r in e.refs:
             print(f"  {r['role']} -> {r['name']}")
+    # reverse refs
+    from keys_keeper.refs import reverse_refs
+    rev = reverse_refs(store.list())
+    if e.name in rev:
+        print("used by:")
+        for dependent in rev[e.name]:
+            print(f"  {dependent}")
     return 0
 
 
