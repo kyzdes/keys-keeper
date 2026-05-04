@@ -1,9 +1,11 @@
 """keys CLI — argparse routing + subcommand dispatch."""
 from __future__ import annotations
 import argparse
+import hashlib
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 from keys_keeper import __version__
@@ -143,6 +145,87 @@ def cmd_info(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_reveal(args: argparse.Namespace) -> int:
+    if os.environ.get("KEYS_KEEPER_ALLOW_REVEAL") != "1":
+        sys.stderr.write(
+            "error: `keys reveal` requires KEYS_KEEPER_ALLOW_REVEAL=1 in env. "
+            "Add to ~/.zshrc to enable. (This guard exists so AI agents can't accidentally "
+            "extract plaintext.)\n"
+        )
+        return 2
+    paths = Paths()
+    store = MetadataStore(paths)
+    audit = AuditLog(paths)
+    e = store.get_by_name(args.name)
+    if e is None:
+        sys.stderr.write(f"no entry named {args.name!r}\n")
+        return 1
+    backend = _backend()
+    try:
+        value = backend.get(e.id)
+    except Exception as ex:
+        audit.record(op="reveal", name=e.name, id_=e.id, success=False, error=str(ex))
+        sys.stderr.write(f"failed to read keychain: {ex}\n")
+        return 1
+    if args.as_env:
+        # NAME=value format for `eval $(keys reveal X --as-env)`
+        env_name = e.name.upper().replace("-", "_").replace(".", "_")
+        print(f"{env_name}={_shell_quote(value)}")
+    else:
+        sys.stdout.write(value)
+        if not value.endswith("\n"):
+            sys.stdout.write("\n")
+    audit.record(op="reveal", name=e.name, id_=e.id, success=True)
+    return 0
+
+
+def _shell_quote(s: str) -> str:
+    return "'" + s.replace("'", "'\\''") + "'"
+
+
+def cmd_copy(args: argparse.Namespace) -> int:
+    paths = Paths()
+    store = MetadataStore(paths)
+    audit = AuditLog(paths)
+    e = store.get_by_name(args.name)
+    if e is None:
+        sys.stderr.write(f"no entry named {args.name!r}\n")
+        return 1
+    backend = _backend()
+    try:
+        value = backend.get(e.id)
+    except Exception as ex:
+        audit.record(op="copy", name=e.name, id_=e.id, success=False, error=str(ex))
+        sys.stderr.write(f"failed to read keychain: {ex}\n")
+        return 1
+
+    proc = subprocess.run(["pbcopy"], input=value, text=True)
+    if proc.returncode != 0:
+        audit.record(op="copy", name=e.name, id_=e.id, success=False, error="pbcopy failed")
+        sys.stderr.write("pbcopy failed\n")
+        return 1
+
+    written_hash = hashlib.sha256(value.encode("utf-8")).hexdigest()
+    print(f"copied {e.name} to clipboard · auto-clear in {args.clear_after}s")
+    audit.record(op="copy", name=e.name, id_=e.id, success=True)
+
+    if args.clear_after > 0:
+        # Spawn a detached process to handle the clear, so this CLI exits immediately.
+        clear_script = (
+            f"sleep {args.clear_after}; "
+            f"current=$(pbpaste 2>/dev/null); "
+            f"current_hash=$(echo -n \"$current\" | shasum -a 256 | cut -d' ' -f1); "
+            f"if [ \"$current_hash\" = \"{written_hash}\" ]; then printf '' | pbcopy; fi"
+        )
+        subprocess.Popen(
+            ["sh", "-c", clear_script],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    return 0
+
+
 # ----- top-level parser -----
 
 def build_parser() -> argparse.ArgumentParser:
@@ -175,6 +258,18 @@ def build_parser() -> argparse.ArgumentParser:
     i = sub.add_parser("info", help="show entry metadata (no value)")
     i.add_argument("name")
     i.set_defaults(func=cmd_info)
+
+    # reveal
+    rv = sub.add_parser("reveal", help="print value to stdout (gated by env-var)")
+    rv.add_argument("name")
+    rv.add_argument("--as-env", action="store_true", help="print as NAME=value for eval")
+    rv.set_defaults(func=cmd_reveal)
+
+    # copy
+    cp = sub.add_parser("copy", help="copy value to clipboard with auto-clear")
+    cp.add_argument("name")
+    cp.add_argument("--clear-after", type=int, default=30, help="seconds before auto-clear (0 = never)")
+    cp.set_defaults(func=cmd_copy)
 
     return p
 
