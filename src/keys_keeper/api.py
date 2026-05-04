@@ -70,6 +70,10 @@ def handle_api(handler, *, paths: Paths, method: str, path: str, body: bytes | N
     if route == "/api/bulk-import" and method == "POST":
         return _bulk_import(handler, paths, parsed.query, body)
 
+    if route.startswith("/api/entries/") and route.endswith("/replace-secret") and method == "POST":
+        entry_id = route[len("/api/entries/"):-len("/replace-secret")]
+        return _replace_secret(handler, paths, entry_id, body)
+
     handler._send_json(404, {"error": "not found"})
 
 
@@ -257,3 +261,24 @@ def _bulk_import(handler, paths: Paths, query: str, body: bytes) -> None:
             backend.set(entry.id, r.value)
         audit.record(op="add", name=entry.name, id_=entry.id, success=True)
     handler._send_json(200, {"ok": True, "imported": len(rows)})
+
+
+def _replace_secret(handler, paths: Paths, entry_id: str, body: bytes) -> None:
+    payload = json.loads(body or b"{}")
+    value = payload.get("value")
+    if not value:
+        handler._send_json(400, {"error": "value required"})
+        return
+    store = MetadataStore(paths)
+    audit = AuditLog(paths)
+    e = store.get_by_id(entry_id)
+    if e is None:
+        handler._send_json(404, {"error": "not found"})
+        return
+    backend = _backend()
+    backend.set(e.id, value)
+    from keys_keeper.models import _now_iso
+    e.updated_at = _now_iso()
+    store.update(e)
+    audit.record(op="replace_secret", name=e.name, id_=e.id, success=True)
+    handler._send_json(200, {"ok": True})

@@ -307,6 +307,31 @@
         await api(`/api/entries/${encodeURIComponent(e.id)}`, { method: 'DELETE' });
         location.href = '/';
       };
+      document.getElementById('replace-secret-btn').onclick = () => {
+        document.getElementById('replace-modal').hidden = false;
+        document.getElementById('rm-input').value = '';
+        document.getElementById('rm-input').focus();
+      };
+      document.getElementById('rm-cancel').onclick = () =>
+        document.getElementById('replace-modal').hidden = true;
+      document.getElementById('rm-cancel-2').onclick = () =>
+        document.getElementById('replace-modal').hidden = true;
+      document.getElementById('rm-save').onclick = async () => {
+        const inp = document.getElementById('rm-input');
+        const val = inp.value;
+        inp.value = '';  // wipe DOM immediately
+        try {
+          await api(`/api/entries/${encodeURIComponent(id)}/replace-secret`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ value: val }),
+          });
+          document.getElementById('replace-modal').hidden = true;
+          toast('Secret replaced');
+        } catch (ex) {
+          toast(`Replace failed: ${ex.message}`, 'error');
+        }
+      };
     });
   }
 

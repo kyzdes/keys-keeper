@@ -27,4 +27,20 @@
     <div id="recent-mount" class="mini-audit">Loading…</div>
   </div>
 </div>
+<div class="modal-backdrop" id="replace-modal" hidden>
+  <div class="modal" style="width:480px">
+    <div class="modal-header">
+      <span class="modal-title">Replace secret value</span>
+      <button class="icon-btn" id="rm-cancel">×</button>
+    </div>
+    <div class="modal-body">
+      <p style="margin-top:0;font-size:12.5px">Paste the new value below. The old value is overwritten in keychain. The DOM never stores the value after submit.</p>
+      <textarea id="rm-input" class="textarea-input" rows="4" placeholder="Paste new secret value"></textarea>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" id="rm-cancel-2">Cancel</button>
+      <button class="btn btn-primary" id="rm-save">Replace</button>
+    </div>
+  </div>
+</div>
 {% endblock %}
