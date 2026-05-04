@@ -6,7 +6,7 @@ import os
 import subprocess
 import threading
 import time
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 from keys_keeper.audit import AuditLog
 from keys_keeper.backend import MacOSKeychainBackend
 from keys_keeper.paths import Paths
@@ -28,7 +28,7 @@ def handle_api(handler, *, paths: Paths, method: str, path: str, body: bytes | N
     if route == "/api/entries" and method == "GET":
         return _entries(handler, paths, parsed.query)
     if route.startswith("/api/entries/") and method == "GET":
-        entry_id = route.rsplit("/", 1)[-1]
+        entry_id = unquote(route.rsplit("/", 1)[-1])
         return _entry_detail(handler, paths, entry_id)
     if route == "/api/copy" and method == "POST":
         return _copy(handler, paths, body)
@@ -45,10 +45,10 @@ def handle_api(handler, *, paths: Paths, method: str, path: str, body: bytes | N
     if route == "/api/entries" and method == "POST":
         return _create_entry(handler, paths, body)
     if route.startswith("/api/entries/") and method == "PATCH":
-        entry_id = route.rsplit("/", 1)[-1]
+        entry_id = unquote(route.rsplit("/", 1)[-1])
         return _patch_entry(handler, paths, entry_id, body)
     if route.startswith("/api/entries/") and method == "DELETE":
-        entry_id = route.rsplit("/", 1)[-1]
+        entry_id = unquote(route.rsplit("/", 1)[-1])
         store = MetadataStore(paths)
         audit = AuditLog(paths)
         e = store.get_by_id(entry_id) or store.get_by_name(entry_id)
@@ -71,7 +71,7 @@ def handle_api(handler, *, paths: Paths, method: str, path: str, body: bytes | N
         return _bulk_import(handler, paths, parsed.query, body)
 
     if route.startswith("/api/entries/") and route.endswith("/replace-secret") and method == "POST":
-        entry_id = route[len("/api/entries/"):-len("/replace-secret")]
+        entry_id = unquote(route[len("/api/entries/"):-len("/replace-secret")])
         return _replace_secret(handler, paths, entry_id, body)
 
     if route == "/api/status" and method == "GET":

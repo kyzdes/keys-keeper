@@ -340,6 +340,12 @@
           toast(`Replace failed: ${ex.message}`, 'error');
         }
       };
+    }).catch(err => {
+      // Surface fetch errors so the user knows why the page is empty —
+      // previously a 404/etc here meant handlers never attached and the
+      // page stayed visually "Loading..." with non-functional buttons.
+      const audit = document.getElementById('recent-mount');
+      if (audit) audit.textContent = `Failed to load entry: ${err.message}`;
     });
   }
 
