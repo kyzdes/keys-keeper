@@ -114,6 +114,10 @@ def make_handler(admin: "AdminServer"):
                 from keys_keeper.pages import render_new_edit
                 self._send(200, render_new_edit(paths=paths, token=admin.token).encode("utf-8"))
                 return
+            if path == "/paste":
+                from keys_keeper.pages import render_bulk_paste
+                self._send(200, render_bulk_paste(paths=paths, token=admin.token).encode("utf-8"))
+                return
             if path.startswith("/entry/") and path.endswith("/edit"):
                 from keys_keeper.pages import render_new_edit
                 from keys_keeper.store import MetadataStore

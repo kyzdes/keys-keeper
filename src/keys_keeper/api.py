@@ -67,6 +67,9 @@ def handle_api(handler, *, paths: Paths, method: str, path: str, body: bytes | N
         handler._send_json(200, {"ok": True})
         return
 
+    if route == "/api/bulk-import" and method == "POST":
+        return _bulk_import(handler, paths, parsed.query, body)
+
     handler._send_json(404, {"error": "not found"})
 
 
@@ -205,3 +208,52 @@ def _shutdown_self() -> None:
     # graceful exit — the test server handles the actual stop via close
     time.sleep(0.05)
     os._exit(0)
+
+
+def _bulk_import(handler, paths: Paths, query: str, body: bytes) -> None:
+    from keys_keeper.parser import parse_bulk
+    from keys_keeper.models import Entry, EntryType, ValidationError
+    payload = json.loads(body or b"{}")
+    text = payload.get("source", "")
+    dry = "dry-run=1" in (query or "")
+    rows = parse_bulk(text)
+
+    out = [{
+        "line": r.line,
+        "name": r.name,
+        "type": r.type,
+        "value": r.value,
+        "tags": r.tags,
+        "error": r.error,
+    } for r in rows]
+
+    if dry:
+        handler._send_json(200, {"rows": out})
+        return
+
+    if any(r.error for r in rows):
+        handler._send_json(400, {"error": "rows have errors", "rows": out})
+        return
+
+    store = MetadataStore(paths)
+    audit = AuditLog(paths)
+    backend = _backend()
+    existing = {e.name for e in store.list()}
+    collisions = [r.name for r in rows if r.name in existing]
+    if collisions:
+        handler._send_json(409, {"error": "name collisions", "names": collisions})
+        return
+
+    for r in rows:
+        type_ = EntryType(r.type)
+        fields: dict = {}
+        try:
+            entry = Entry.new(name=r.name, type=type_, fields=fields, tags=r.tags)
+        except ValidationError as ex:
+            handler._send_json(500, {"error": f"row {r.line}: {ex}"})
+            return
+        store.add(entry)
+        if type_ in (EntryType.API_KEY, EntryType.SSH_KEY) or type_ == EntryType.NOTE:
+            backend.set(entry.id, r.value)
+        audit.record(op="add", name=entry.name, id_=entry.id, success=True)
+    handler._send_json(200, {"ok": True, "imported": len(rows)})

@@ -427,4 +427,96 @@
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); save(); }
     });
   }
+
+  if (document.getElementById('bulk-shell')) {
+    const input = document.getElementById('bulk-input');
+    const rowsEl = document.getElementById('preview-rows');
+    let lastParse = [];
+
+    document.getElementById('format-toggle').onclick = () => {
+      const h = document.getElementById('format-help');
+      h.hidden = !h.hidden;
+    };
+
+    let timer = null;
+    input.addEventListener('input', () => {
+      clearTimeout(timer);
+      timer = setTimeout(parsePreview, 200);
+    });
+
+    async function parsePreview() {
+      const text = input.value;
+      document.getElementById('line-count').textContent = `${text.split('\n').length} lines`;
+      const r = await api('/api/bulk-import?dry-run=1', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source: text }),
+      });
+      lastParse = r.rows;
+      renderPreview(r.rows);
+      const errs = r.rows.filter(r => r.error).length;
+      document.getElementById('preview-count').textContent = `${r.rows.length} entries · ${errs} errors`;
+      document.getElementById('bulk-summary').textContent = errs > 0
+        ? `${r.rows.length - errs} ready · ${errs} error${errs > 1 ? 's' : ''} blocking save`
+        : `Will save ${r.rows.length} entries · 0 errors`;
+      const btn = document.getElementById('bulk-save');
+      btn.disabled = (r.rows.length === 0 || errs > 0);
+    }
+
+    function renderPreview(rows) {
+      rowsEl.innerHTML = '';
+      rows.forEach(r => {
+        const row = el('div', { class: 'bulk-preview-row' + (r.error ? ' error' : '') });
+        row.append(
+          el('span', { class: 'status-dot' }),
+          el('span', { class: 'row-num' }, String(r.line)),
+          el('span', { class: 'name' }, r.name),
+          (() => {
+            const sel = document.createElement('select');
+            sel.className = 'type-dropdown';
+            ['api_key', 'ssh_key', 'server', 'domain', 'note'].forEach(t => {
+              const opt = document.createElement('option');
+              opt.value = t; opt.textContent = t;
+              if (t === r.type) opt.selected = true;
+              sel.append(opt);
+            });
+            sel.onchange = () => { r.type = sel.value; };
+            return sel;
+          })(),
+          el('span', { class: 'summary' },
+            el('span', { class: 'muted' }, r.value.includes('\n') ? `${r.value.split('\n').length} lines` : `${r.value.length} chars`),
+            ' ',
+            el('span', { style: 'color:var(--type-domain)' }, r.tags.length ? `[${r.tags.join(',')}]` : ''),
+          ),
+          el('span', { class: 'muted', style: 'font-size:10px' }, '↗ line'),
+          el('span'),
+        );
+        rowsEl.append(row);
+        if (r.error) {
+          rowsEl.append(el('div', { class: 'bulk-error-detail' },
+            el('span', { class: 'line-no' }, `line ${r.line}:`),
+            ' ',
+            r.error,
+          ));
+        }
+      });
+    }
+
+    document.getElementById('bulk-save').onclick = async () => {
+      try {
+        const r = await api('/api/bulk-import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ source: input.value, rows: lastParse }),
+        });
+        if (r.ok) {
+          location.href = '/';
+        } else {
+          alert(`Import failed: ${r.error}`);
+        }
+      } catch (ex) {
+        alert(`Import failed: ${ex.message}`);
+      }
+    };
+  }
 })();
