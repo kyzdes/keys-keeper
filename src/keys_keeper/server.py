@@ -1,0 +1,141 @@
+"""Localhost admin HTTP server with token auth."""
+from __future__ import annotations
+import json
+import secrets
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import urlparse, parse_qs
+from keys_keeper.paths import Paths
+
+
+_NO_CACHE_HEADERS = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, private",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'",
+}
+
+
+class AdminServer:
+    """Wraps ThreadingHTTPServer with idle-timeout auto-shutdown and a generated session token."""
+
+    def __init__(self, *, paths: Paths, port: int = 7777, idle_timeout_sec: int = 900):
+        self.paths = paths
+        self.requested_port = port
+        self.bound_port = 0
+        self.idle_timeout_sec = idle_timeout_sec
+        self.token = secrets.token_hex(32)
+        self.last_seen = time.monotonic()
+        self._server: ThreadingHTTPServer | None = None
+        self._stop_event = threading.Event()
+
+    # ---- public ----
+
+    def serve_forever(self) -> None:
+        handler_cls = make_handler(self)
+        self._server = ThreadingHTTPServer(("127.0.0.1", self.requested_port), handler_cls)
+        self.bound_port = self._server.server_port
+        threading.Thread(target=self._idle_watchdog, daemon=True).start()
+        self._server.serve_forever()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._server is not None:
+            self._server.shutdown()
+
+    def heartbeat(self) -> None:
+        self.last_seen = time.monotonic()
+
+    # ---- internal ----
+
+    def _idle_watchdog(self) -> None:
+        while not self._stop_event.is_set():
+            time.sleep(5)
+            if time.monotonic() - self.last_seen > self.idle_timeout_sec:
+                self.stop()
+                return
+
+
+def make_handler(admin: "AdminServer"):
+    paths = admin.paths
+
+    class Handler(BaseHTTPRequestHandler):
+        # silence default noisy logging during tests
+        def log_message(self, fmt: str, *args) -> None:
+            return
+
+        # ---- helpers ----
+
+        def _verify_token(self) -> bool:
+            # Accept token via header (preferred) or via query string on initial HTML load.
+            header_token = self.headers.get("Sec-Keys-Token")
+            if header_token == admin.token:
+                return True
+            # Allow query-string token only on GET HTML pages
+            qs = parse_qs(urlparse(self.path).query)
+            if qs.get("t", [""])[0] == admin.token:
+                return True
+            return False
+
+        def _send(self, status: int, body: bytes, content_type: str = "text/html; charset=utf-8") -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            for k, v in _NO_CACHE_HEADERS.items():
+                self.send_header(k, v)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _send_json(self, status: int, payload: dict | list) -> None:
+            data = json.dumps(payload).encode("utf-8")
+            self._send(status, data, "application/json")
+
+        # ---- routing ----
+
+        def do_GET(self) -> None:
+            admin.heartbeat()
+            parsed = urlparse(self.path)
+            path = parsed.path
+            if not self._verify_token():
+                self._send(403, b"forbidden")
+                return
+            if path == "/" or path == "/index.html":
+                from keys_keeper.pages import render_dashboard
+                html = render_dashboard(paths=paths, token=admin.token)
+                self._send(200, html.encode("utf-8"))
+                return
+            if path.startswith("/api/"):
+                from keys_keeper.api import handle_api
+                handle_api(self, paths=paths, method="GET", path=path, body=None)
+                return
+            if path.startswith("/static/"):
+                self._serve_static(path)
+                return
+            self._send(404, b"not found")
+
+        def do_POST(self) -> None:
+            admin.heartbeat()
+            if not self._verify_token():
+                self._send(403, b"forbidden")
+                return
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length) if length else b""
+            from keys_keeper.api import handle_api
+            handle_api(self, paths=paths, method="POST", path=urlparse(self.path).path, body=body)
+
+        def _serve_static(self, path: str) -> None:
+            asset = (Path(__file__).parent / path.lstrip("/")).resolve()
+            base = (Path(__file__).parent / "static").resolve()
+            if not str(asset).startswith(str(base)) or not asset.is_file():
+                self._send(404, b"not found")
+                return
+            content_type = (
+                "text/css" if asset.suffix == ".css"
+                else "application/javascript" if asset.suffix == ".js"
+                else "application/octet-stream"
+            )
+            self._send(200, asset.read_bytes(), content_type)
+
+    return Handler
