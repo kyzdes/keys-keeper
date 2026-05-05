@@ -8,17 +8,11 @@ import threading
 import time
 from urllib.parse import parse_qs, unquote, urlparse
 from keys_keeper.audit import AuditLog
-from keys_keeper.backend import MacOSKeychainBackend
+from keys_keeper.composition import build_backend
+from keys_keeper.models import now_iso
 from keys_keeper.paths import Paths
 from keys_keeper.refs import reverse_refs
 from keys_keeper.store import MetadataStore
-
-
-def _backend():
-    return MacOSKeychainBackend(
-        service=os.environ.get("KEYS_KEEPER_TEST_SERVICE", "keys-keeper"),
-        keychain_path=os.environ.get("KEYS_KEEPER_TEST_KEYCHAIN"),
-    )
 
 
 def handle_api(handler, *, paths: Paths, method: str, path: str, body: bytes | None) -> None:
@@ -60,7 +54,7 @@ def handle_api(handler, *, paths: Paths, method: str, path: str, body: bytes | N
             handler._send_json(409, {"error": "has dependents", "dependents": [d.name for d in deps]})
             return
         store.delete_by_name(e.name)
-        backend = _backend()
+        backend = build_backend()
         backend.delete(e.id)
         backend.delete(e.id + ":passphrase")
         audit.record(op="delete", name=e.name, id_=e.id, success=True)
@@ -116,7 +110,7 @@ def _copy(handler, paths: Paths, body: bytes) -> None:
     if e is None:
         handler._send_json(404, {"error": "entry not found"})
         return
-    backend = _backend()
+    backend = build_backend()
     try:
         value = backend.get(e.id)
     except Exception as ex:
@@ -174,7 +168,7 @@ def _create_entry(handler, paths: Paths, body: bytes) -> None:
         return
     store = MetadataStore(paths)
     audit = AuditLog(paths)
-    backend = _backend()
+    backend = build_backend()
     try:
         store.add(e)
     except Exception as ex:
@@ -202,11 +196,10 @@ def _patch_entry(handler, paths: Paths, entry_id: str, body: bytes) -> None:
         e.fields = {**e.fields, **payload["fields"]}
     if "refs" in payload:
         e.refs = list(payload["refs"])
-    from keys_keeper.models import _now_iso
-    e.updated_at = _now_iso()
+    e.updated_at = now_iso()
     store.update(e)
     if payload.get("value"):
-        _backend().set(e.id, payload["value"])
+        build_backend().set(e.id, payload["value"])
     audit.record(op="update", name=e.name, id_=e.id, success=True)
     handler._send_json(200, {"ok": True})
 
@@ -244,7 +237,7 @@ def _bulk_import(handler, paths: Paths, query: str, body: bytes) -> None:
 
     store = MetadataStore(paths)
     audit = AuditLog(paths)
-    backend = _backend()
+    backend = build_backend()
     existing = {e.name for e in store.list()}
     collisions = [r.name for r in rows if r.name in existing]
     if collisions:
@@ -292,10 +285,9 @@ def _replace_secret(handler, paths: Paths, entry_id: str, body: bytes) -> None:
     if e is None:
         handler._send_json(404, {"error": "not found"})
         return
-    backend = _backend()
+    backend = build_backend()
     backend.set(e.id, value)
-    from keys_keeper.models import _now_iso
-    e.updated_at = _now_iso()
+    e.updated_at = now_iso()
     store.update(e)
     audit.record(op="replace_secret", name=e.name, id_=e.id, success=True)
     handler._send_json(200, {"ok": True})

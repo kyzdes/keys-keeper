@@ -12,19 +12,10 @@ from pathlib import Path
 
 from keys_keeper import __version__
 from keys_keeper.audit import AuditLog
-from keys_keeper.backend import KeychainBackend, MacOSKeychainBackend
-from keys_keeper.models import Entry, EntryType, ValidationError
+from keys_keeper.composition import build_backend
+from keys_keeper.models import Entry, EntryType, ValidationError, now_iso
 from keys_keeper.paths import Paths
 from keys_keeper.store import MetadataStore, NameConflict, NotFound, StoreError
-
-
-# ----- backend factory (test override hook) -----
-
-def _backend() -> KeychainBackend:
-    return MacOSKeychainBackend(
-        service=os.environ.get("KEYS_KEEPER_TEST_SERVICE", "keys-keeper"),
-        keychain_path=os.environ.get("KEYS_KEEPER_TEST_KEYCHAIN"),
-    )
 
 
 # ----- input source resolution -----
@@ -62,7 +53,7 @@ def cmd_add(args: argparse.Namespace) -> int:
     paths.ensure()
     store = MetadataStore(paths)
     audit = AuditLog(paths)
-    backend = _backend()
+    backend = build_backend()
     type_ = EntryType(args.type)
 
     # merge --field flags into fields dict
@@ -193,7 +184,7 @@ def cmd_reveal(args: argparse.Namespace) -> int:
     if e is None:
         sys.stderr.write(f"no entry named {args.name!r}\n")
         return 1
-    backend = _backend()
+    backend = build_backend()
     try:
         value = backend.get(e.id)
     except Exception as ex:
@@ -224,7 +215,7 @@ def cmd_copy(args: argparse.Namespace) -> int:
     if e is None:
         sys.stderr.write(f"no entry named {args.name!r}\n")
         return 1
-    backend = _backend()
+    backend = build_backend()
     try:
         value = backend.get(e.id)
     except Exception as ex:
@@ -268,7 +259,7 @@ def cmd_inject(args: argparse.Namespace) -> int:
     if e is None:
         sys.stderr.write(f"no entry named {args.name!r}\n")
         return 1
-    backend = _backend()
+    backend = build_backend()
     value = backend.get(e.id)
     target = Path(args.file)
     if target.exists():
@@ -307,7 +298,7 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     paths = Paths()
     store = MetadataStore(paths)
     audit = AuditLog(paths)
-    backend = _backend()
+    backend = build_backend()
     target = Path(args.file)
     content = target.read_text()
     errors = []
@@ -373,7 +364,7 @@ def cmd_rm(args: argparse.Namespace) -> int:
             d.refs = [r for r in d.refs if r.get("name") != e.name]
             store.update(d)
     store.delete_by_name(args.name)
-    backend = _backend()
+    backend = build_backend()
     backend.delete(e.id)
     backend.delete(e.id + ":passphrase")  # in case ssh_key had passphrase
     audit.record(op="delete", name=e.name, id_=e.id, success=True)
@@ -424,7 +415,7 @@ def cmd_edit(args: argparse.Namespace) -> int:
             sys.stderr.write(f"error: name {args.new_name!r} already taken\n")
             return 1
         e.name = args.new_name
-    e.updated_at = __import__("keys_keeper.models", fromlist=["_now_iso"])._now_iso()
+    e.updated_at = now_iso()
     store.update(e)
     audit.record(op="update", name=e.name, id_=e.id, success=True)
     print(f"updated {e.name}")
@@ -442,7 +433,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"  config.toml:  {'exists' if paths.config_toml.exists() else '(default)'}")
     # keychain access probe
     try:
-        backend = _backend()
+        backend = build_backend()
         backend.list_ids()
         print("keychain:     ✓ accessible")
     except Exception as ex:
@@ -486,7 +477,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     # keychain orphans (account exists but no metadata) and missing (metadata but no keychain)
     try:
-        kc_ids = set(_backend().list_ids())
+        kc_ids = set(build_backend().list_ids())
     except Exception:
         kc_ids = None
     if kc_ids is not None:
@@ -509,7 +500,7 @@ def cmd_ssh(args: argparse.Namespace) -> int:
     paths = Paths()
     store = MetadataStore(paths)
     audit = AuditLog(paths)
-    backend = _backend()
+    backend = build_backend()
     e = store.get_by_name(args.name)
     if e is None:
         sys.stderr.write(f"no entry named {args.name!r}\n")
@@ -542,7 +533,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
 def cmd_export(args: argparse.Namespace) -> int:
     paths = Paths()
     store = MetadataStore(paths)
-    backend = _backend()
+    backend = build_backend()
     audit = AuditLog(paths)
     pw = getpass.getpass("Export password: ")
     pw2 = getpass.getpass("Confirm: ")
@@ -589,7 +580,7 @@ def cmd_import(args: argparse.Namespace) -> int:
         return 1
     payload = _json.loads(raw)
     store = MetadataStore(paths)
-    backend = _backend()
+    backend = build_backend()
     audit = AuditLog(paths)
     existing = {e.name for e in store.list()}
     imported = 0

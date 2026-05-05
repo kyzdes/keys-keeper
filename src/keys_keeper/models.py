@@ -44,7 +44,7 @@ _REQUIRED_FIELDS: dict[EntryType, set[str]] = {
 }
 
 
-def _now_iso() -> str:
+def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -105,7 +105,7 @@ class Entry:
             raise ValidationError(
                 f"{type.value} requires fields: {sorted(missing)} (have: {sorted(f)})"
             )
-        now = _now_iso()
+        now = now_iso()
         return cls(
             id=f"kk:{uuid.uuid4()}",
             name=name,
