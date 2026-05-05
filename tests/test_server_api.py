@@ -69,6 +69,8 @@ def test_api_copy_writes_clipboard_and_audits(admin, monkeypatch):
     resp = _post(admin, "/api/copy", {"id": entry_id})
     payload = json.loads(resp.read())
     assert payload["ok"] is True
+    # default mirrors CLI's --clear-after default of 30s
+    assert payload["clear_after"] == 30
     import subprocess
     pasted = subprocess.run(["pbpaste"], capture_output=True, text=True).stdout
     assert pasted == "copy-secret-v"
@@ -76,6 +78,29 @@ def test_api_copy_writes_clipboard_and_audits(admin, monkeypatch):
     from keys_keeper.audit import AuditLog
     events = list(AuditLog(Paths()).search(op="copy"))
     assert any(e["name"] == "copy-target" for e in events)
+
+
+def test_api_copy_respects_clear_after_param(admin, monkeypatch):
+    _seed(monkeypatch, "copy-target-2", value="v2")
+    entries = json.loads(_get(admin, "/api/entries").read())["entries"]
+    entry_id = next(e["id"] for e in entries if e["name"] == "copy-target-2")
+    # 0 disables the clear timer (parity with CLI --clear-after 0)
+    resp = _post(admin, "/api/copy", {"id": entry_id, "clear_after": 0})
+    payload = json.loads(resp.read())
+    assert payload["ok"] is True
+    assert payload["clear_after"] == 0
+
+
+def test_api_copy_rejects_negative_clear_after(admin, monkeypatch):
+    _seed(monkeypatch, "copy-target-3", value="v3")
+    entries = json.loads(_get(admin, "/api/entries").read())["entries"]
+    entry_id = next(e["id"] for e in entries if e["name"] == "copy-target-3")
+    try:
+        _post(admin, "/api/copy", {"id": entry_id, "clear_after": -5})
+        assert False, "expected 400"
+    except Exception as ex:
+        # urllib raises HTTPError on 4xx
+        assert "400" in str(ex)
 
 
 def test_api_heartbeat_returns_ok(admin):
@@ -117,3 +142,66 @@ def test_api_delete_entry(admin, monkeypatch):
     urllib.request.urlopen(req).read()
     after = json.loads(_get(admin, "/api/entries").read())["entries"]
     assert all(e["name"] != "to-del" for e in after)
+
+
+def _delete(admin, eid: str, *, cascade: bool = False):
+    suffix = "?cascade=1" if cascade else ""
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{admin.bound_port}/api/entries/{eid}{suffix}",
+        method="DELETE",
+    )
+    req.add_header("Sec-Keys-Token", admin.token)
+    return urllib.request.urlopen(req, timeout=2)
+
+
+def test_api_delete_with_dependents_returns_409_without_cascade(admin, monkeypatch):
+    """Mirrors CLI rm: refusing to delete an entry with reverse-refs."""
+    from keys_keeper.audit import AuditLog
+    from keys_keeper.store import MetadataStore
+    _seed(monkeypatch, "ssh-parent")
+    # add a server entry that refs the ssh-parent (manually via store, simpler than CLI add)
+    store = MetadataStore(Paths())
+    parent = store.get_by_name("ssh-parent")
+    from keys_keeper.models import Entry, EntryType
+    server_entry = Entry.new(
+        name="server-child",
+        type=EntryType.SERVER,
+        fields={"host": "x.example", "user": "root", "auth": "ssh_key"},
+        refs=[{"role": "ssh_key", "name": "ssh-parent"}],
+    )
+    store.add(server_entry)
+
+    try:
+        _delete(admin, parent.id, cascade=False)
+        assert False, "expected 409"
+    except urllib.error.HTTPError as ex:
+        assert ex.code == 409
+        body = json.loads(ex.read())
+        assert "server-child" in body["dependents"]
+
+
+def test_api_delete_with_cascade_strips_refs_and_deletes(admin, monkeypatch):
+    """Mirrors CLI rm --cascade: strip dangling refs from dependents, then delete."""
+    from keys_keeper.store import MetadataStore
+    from keys_keeper.models import Entry, EntryType
+    _seed(monkeypatch, "ssh-parent-2")
+    store = MetadataStore(Paths())
+    parent = store.get_by_name("ssh-parent-2")
+    server_entry = Entry.new(
+        name="server-child-2",
+        type=EntryType.SERVER,
+        fields={"host": "x.example", "user": "root", "auth": "ssh_key"},
+        refs=[{"role": "ssh_key", "name": "ssh-parent-2"}],
+    )
+    store.add(server_entry)
+
+    resp = _delete(admin, parent.id, cascade=True)
+    body = json.loads(resp.read())
+    assert body["ok"] is True
+    assert "server-child-2" in body["cascaded"]
+    # parent gone, child remains but with refs stripped
+    after_store = MetadataStore(Paths())
+    assert after_store.get_by_name("ssh-parent-2") is None
+    surviving_child = after_store.get_by_name("server-child-2")
+    assert surviving_child is not None
+    assert surviving_child.refs == []

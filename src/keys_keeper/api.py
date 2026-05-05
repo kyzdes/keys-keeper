@@ -43,6 +43,8 @@ def handle_api(handler, *, paths: Paths, method: str, path: str, body: bytes | N
         return _patch_entry(handler, paths, entry_id, body)
     if route.startswith("/api/entries/") and method == "DELETE":
         entry_id = unquote(route.rsplit("/", 1)[-1])
+        # Mirror CLI's `rm --cascade`: opt-in via ?cascade=1.
+        cascade = parse_qs(parsed.query).get("cascade", ["0"])[0] in ("1", "true", "yes")
         store = MetadataStore(paths)
         audit = AuditLog(paths)
         e = store.get_by_id(entry_id) or store.get_by_name(entry_id)
@@ -50,15 +52,20 @@ def handle_api(handler, *, paths: Paths, method: str, path: str, body: bytes | N
             handler._send_json(404, {"error": "not found"})
             return
         deps = [x for x in store.list() if any(r.get("name") == e.name for r in x.refs)]
-        if deps:
+        if deps and not cascade:
             handler._send_json(409, {"error": "has dependents", "dependents": [d.name for d in deps]})
             return
+        if deps and cascade:
+            # Strip the now-dangling ref from each dependent (same algorithm as cli.py:373).
+            for d in deps:
+                d.refs = [r for r in d.refs if r.get("name") != e.name]
+                store.update(d)
         store.delete_by_name(e.name)
         backend = build_backend()
         backend.delete(e.id)
         backend.delete(e.id + ":passphrase")
         audit.record(op="delete", name=e.name, id_=e.id, success=True)
-        handler._send_json(200, {"ok": True})
+        handler._send_json(200, {"ok": True, "cascaded": [d.name for d in deps] if cascade else []})
         return
 
     if route == "/api/bulk-import" and method == "POST":
@@ -101,9 +108,21 @@ def _entry_detail(handler, paths: Paths, entry_id: str) -> None:
     handler._send_json(200, d)
 
 
+DEFAULT_CLIPBOARD_CLEAR_SEC = 30
+
+
 def _copy(handler, paths: Paths, body: bytes) -> None:
     payload = json.loads(body or b"{}")
     entry_id = payload.get("id")
+    # Mirror the CLI's `--clear-after` flag (cli.py default: 30, 0 disables).
+    try:
+        clear_after = int(payload.get("clear_after", DEFAULT_CLIPBOARD_CLEAR_SEC))
+    except (TypeError, ValueError):
+        handler._send_json(400, {"error": "clear_after must be an integer"})
+        return
+    if clear_after < 0:
+        handler._send_json(400, {"error": "clear_after must be >= 0"})
+        return
     store = MetadataStore(paths)
     audit = AuditLog(paths)
     e = store.get_by_id(entry_id) if entry_id else None
@@ -126,12 +145,13 @@ def _copy(handler, paths: Paths, body: bytes) -> None:
         return
     audit.record(op="copy", name=e.name, id_=e.id, success=True)
     written_hash = hashlib.sha256(value.encode("utf-8")).hexdigest()
-    threading.Thread(
-        target=_clipboard_clear_after,
-        args=(written_hash, 30),
-        daemon=True,
-    ).start()
-    handler._send_json(200, {"ok": True})
+    if clear_after > 0:
+        threading.Thread(
+            target=_clipboard_clear_after,
+            args=(written_hash, clear_after),
+            daemon=True,
+        ).start()
+    handler._send_json(200, {"ok": True, "clear_after": clear_after})
 
 
 def _clipboard_clear_after(written_hash: str, delay: int) -> None:
