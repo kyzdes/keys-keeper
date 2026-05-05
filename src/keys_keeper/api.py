@@ -112,11 +112,13 @@ def _copy(handler, paths: Paths, body: bytes) -> None:
         return
     backend = build_backend()
     try:
-        value = backend.get(e.id)
+        sealed = backend.get(e.id)
     except Exception as ex:
         audit.record(op="copy", name=e.name, id_=e.id, success=False, error=str(ex))
         handler._send_json(500, {"error": str(ex)})
         return
+    # Clipboard sink (controlled, not transcript-visible to the agent).
+    value = sealed.unseal()
     proc = subprocess.run(["pbcopy"], input=value, text=True)
     if proc.returncode != 0:
         audit.record(op="copy", name=e.name, id_=e.id, success=False, error="pbcopy failed")

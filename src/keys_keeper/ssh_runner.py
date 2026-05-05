@@ -29,7 +29,8 @@ def run_ssh(
             ssh_entry = resolve_chain(store.list(), server_name, "ssh_key")
         except RefMissingError as e:
             raise ValueError(f"server {server_name} requires ssh_key ref: {e}")
-        private_key = backend.get(ssh_entry.id)
+        # 0600 tempfile sink (controlled, not transcript-visible).
+        private_key = backend.get(ssh_entry.id).unseal()
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".key", delete=False, dir=os.path.expanduser("~/.ssh") if os.path.exists(os.path.expanduser("~/.ssh")) else None,
         ) as tmp:

@@ -32,7 +32,7 @@ def test_add_from_stdin(cli_env, monkeypatch):
         service=os.environ["KEYS_KEEPER_TEST_SERVICE"],
         keychain_path=os.environ["KEYS_KEEPER_TEST_KEYCHAIN"],
     )
-    assert backend.get(e.id) == "sk-test-secret"
+    assert backend.get(e.id).unseal() == "sk-test-secret"
 
 
 def test_add_from_file(cli_env, tmp_path):
@@ -45,7 +45,7 @@ def test_add_from_file(cli_env, tmp_path):
         keychain_path=os.environ["KEYS_KEEPER_TEST_KEYCHAIN"],
     )
     e = MetadataStore(Paths()).get_by_name("from-file-key")
-    assert backend.get(e.id) == "file-stored-secret"
+    assert backend.get(e.id).unseal() == "file-stored-secret"
 
 
 def test_add_requires_input_source(cli_env, capsys):

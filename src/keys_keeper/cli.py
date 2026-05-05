@@ -186,11 +186,15 @@ def cmd_reveal(args: argparse.Namespace) -> int:
         return 1
     backend = build_backend()
     try:
-        value = backend.get(e.id)
+        sealed = backend.get(e.id)
     except Exception as ex:
         audit.record(op="reveal", name=e.name, id_=e.id, success=False, error=str(ex))
         sys.stderr.write(f"failed to read keychain: {ex}\n")
         return 1
+    # ⚠️  load-bearing: this is the only stdout-bound .unseal() in the codebase.
+    # The env gate above is the structural guarantee; .unseal() here is the
+    # explicit unwrap that grep -rn finds when auditing the threat model.
+    value = sealed.unseal()
     if args.as_env:
         # NAME=value format for `eval $(keys reveal X --as-env)`
         env_name = e.name.upper().replace("-", "_").replace(".", "_")
@@ -217,12 +221,15 @@ def cmd_copy(args: argparse.Namespace) -> int:
         return 1
     backend = build_backend()
     try:
-        value = backend.get(e.id)
+        sealed = backend.get(e.id)
     except Exception as ex:
         audit.record(op="copy", name=e.name, id_=e.id, success=False, error=str(ex))
         sys.stderr.write(f"failed to read keychain: {ex}\n")
         return 1
 
+    # Clipboard is a controlled (non-transcript) sink. Unwrap is local; the
+    # plaintext does not leave this scope as a printable.
+    value = sealed.unseal()
     proc = subprocess.run(["pbcopy"], input=value, text=True)
     if proc.returncode != 0:
         audit.record(op="copy", name=e.name, id_=e.id, success=False, error="pbcopy failed")
@@ -260,7 +267,8 @@ def cmd_inject(args: argparse.Namespace) -> int:
         sys.stderr.write(f"no entry named {args.name!r}\n")
         return 1
     backend = build_backend()
-    value = backend.get(e.id)
+    # File sink (controlled, not transcript-visible).
+    value = backend.get(e.id).unseal()
     target = Path(args.file)
     if target.exists():
         existing = target.read_text()
@@ -322,7 +330,8 @@ def cmd_resolve(args: argparse.Namespace) -> int:
         else:
             count += 1
             try:
-                return backend.get(e.id)
+                # File-substitution sink (controlled, not transcript).
+                return backend.get(e.id).unseal()
             except Exception as ex:
                 errors.append(f"keychain miss for {name}: {ex}")
                 return match.group(0)
@@ -549,11 +558,12 @@ def cmd_export(args: argparse.Namespace) -> int:
         rec["_secret"] = None
         rec["_secret_passphrase"] = None
         try:
-            rec["_secret"] = backend.get(e.id)
+            # AES-GCM-encrypted blob sink (controlled, not transcript).
+            rec["_secret"] = backend.get(e.id).unseal()
         except Exception:
             pass
         try:
-            rec["_secret_passphrase"] = backend.get(e.id + ":passphrase")
+            rec["_secret_passphrase"] = backend.get(e.id + ":passphrase").unseal()
         except Exception:
             pass
         payload["entries"].append(rec)
