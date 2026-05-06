@@ -36,7 +36,12 @@ User: "Open ssh to do-prod-droplet."
 
 User: "Show audit log for openrouter-cline."
 
-`keys audit --name openrouter-cline --since 7d` (note: `keys audit` CLI may be implemented in v0.1.x; for now use the web admin's `/audit` page via `keys serve`).
+`keys audit --name openrouter-cline --since 7d` — most recent first, shows op + caller path + file target.
+
+Other shapes:
+- `keys audit --op copy --since 24h` — every copy in the last day.
+- `keys audit --since 30d --limit 200` — bulk dump for grep.
+- `keys serve` → `/audit` page if the user wants charts.
 
 ## "Rotate my Stripe key"
 
