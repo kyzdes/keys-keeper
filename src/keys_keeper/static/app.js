@@ -312,8 +312,27 @@
       document.getElementById('copy-btn').onclick = () => copy(e.id, e.name);
       document.getElementById('delete-btn').onclick = async () => {
         if (!confirm(`Delete ${e.name}?`)) return;
-        await api(`/api/entries/${encodeURIComponent(e.id)}`, { method: 'DELETE' });
-        location.href = '/';
+        const doDelete = async (cascade) => {
+          const url = `/api/entries/${encodeURIComponent(e.id)}` + (cascade ? '?cascade=1' : '');
+          return fetch(url, { method: 'DELETE', headers: { 'Sec-Keys-Token': TOKEN } });
+        };
+        try {
+          let r = await doDelete(false);
+          if (r.status === 409) {
+            const body = await r.json().catch(() => ({}));
+            const deps = (body.dependents || []).join(', ') || 'other entries';
+            if (!confirm(`${e.name} is referenced by: ${deps}\n\nDelete anyway and strip refs from dependents?`)) return;
+            r = await doDelete(true);
+          }
+          if (!r.ok) {
+            const body = await r.json().catch(() => ({}));
+            toast(`Delete failed — ${body.error || r.status}`, 'error');
+            return;
+          }
+          location.href = '/';
+        } catch (ex) {
+          toast(`Delete failed — ${ex.message || ex}`, 'error');
+        }
       };
       document.getElementById('replace-secret-btn').onclick = () => {
         document.getElementById('replace-modal').hidden = false;
