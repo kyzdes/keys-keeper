@@ -6,7 +6,7 @@
 
 Stores API keys, SSH keys, server credentials, and domain info in the OS-native credential store (macOS Keychain on macOS, Credential Manager on Windows). Ships with a Claude skill that lets agents *put* secrets into your files without ever *seeing* the value.
 
-**Status:** v0.1 · macOS + Windows · single-user · MIT license
+**Status:** v0.2.0 · macOS + Windows · single-user · MIT license
 
 <!--
   TODO(launch): record 30-45s demo gif showing
