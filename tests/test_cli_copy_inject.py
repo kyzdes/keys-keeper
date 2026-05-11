@@ -45,6 +45,7 @@ def test_reveal_unknown_name(cli_env, capsys, monkeypatch):
     assert rc != 0
 
 
+@pytest.mark.macos
 def test_copy_writes_to_pbcopy(cli_env, capsys, monkeypatch):
     _add("cp1", "clip-secret", monkeypatch)
     capsys.readouterr()

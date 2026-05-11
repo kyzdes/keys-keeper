@@ -21,4 +21,14 @@
   </div>
   <div id="entries-mount">Loading…</div>
 </div>
+
+<details id="env-panel" class="env-panel" hidden>
+  <summary>
+    <span class="env-title">Process env</span>
+    <span class="env-count" id="env-count"></span>
+    <span class="env-hint">names only · values never leave the backend</span>
+  </summary>
+  <input class="env-search" id="env-search" placeholder="filter env names · type to search">
+  <div class="env-list" id="env-list"></div>
+</details>
 {% endblock %}

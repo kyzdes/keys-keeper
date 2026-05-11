@@ -1,6 +1,5 @@
-"""Metadata store backed by a JSON file with atomic writes + fcntl flock."""
+"""Metadata store backed by a JSON file with atomic writes + exclusive lock."""
 from __future__ import annotations
-import fcntl
 import json
 import os
 import shutil
@@ -9,6 +8,7 @@ from pathlib import Path
 from typing import Iterator
 from contextlib import contextmanager
 
+from keys_keeper._locking import lock_exclusive, unlock
 from keys_keeper.models import Entry, EntryType
 from keys_keeper.paths import Paths
 
@@ -119,18 +119,19 @@ class MetadataStore:
 
     @contextmanager
     def _locked_write(self) -> Iterator[dict]:
-        """Acquire exclusive flock, read, yield mutable dict, write atomically."""
+        """Acquire exclusive lock, read, yield mutable dict, write atomically."""
         self.paths.root.mkdir(parents=True, exist_ok=True)
         # Lock on a separate file so we can rename data.json atomically without
-        # invalidating the lock fd.
+        # invalidating the lock fd. On Windows the mode bits are ignored; the
+        # lock file holds no secrets so this is acceptable.
         lock_fd = os.open(self._lock_path, os.O_WRONLY | os.O_CREAT, 0o600)
         try:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            lock_exclusive(lock_fd)
             data = self._read()
             yield data
             self._atomic_write(data)
         finally:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            unlock(lock_fd)
             os.close(lock_fd)
 
     def _atomic_write(self, data: dict) -> None:

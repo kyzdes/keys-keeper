@@ -6,6 +6,10 @@ from keys_keeper import cli
 from keys_keeper.paths import Paths
 from keys_keeper.store import MetadataStore
 
+# Uses /dev/null as a placeholder source — POSIX-only path. Mark the whole
+# module macOS-only; a Windows-friendly variant can land in a separate test.
+pytestmark = pytest.mark.macos
+
 
 @pytest.fixture
 def cli_env(kk_home, test_keychain, monkeypatch):

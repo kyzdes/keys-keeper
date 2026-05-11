@@ -48,6 +48,27 @@ def _seed(monkeypatch, name, value="v"):
     cli.main(["add", name, "--type", "api_key", "--stdin"])
 
 
+def test_api_env_names_returns_names_only(monkeypatch):
+    """The env panel must never leak values — only names cross the wire."""
+    from keys_keeper.api import _env_names
+    monkeypatch.setenv("KK_PANEL_TEST_VAR", "this-must-not-leak")
+    captured = {}
+
+    class FakeHandler:
+        def _send_json(self, status, body):
+            captured["status"] = status
+            captured["body"] = body
+
+    _env_names(FakeHandler())
+    assert captured["status"] == 200
+    names = captured["body"]["names"]
+    assert "KK_PANEL_TEST_VAR" in names
+    # No value-shaped data anywhere in the response.
+    assert "this-must-not-leak" not in json.dumps(captured["body"])
+    # Names are sorted for deterministic UI rendering.
+    assert names == sorted(names)
+
+
 def test_api_entries_returns_seeded_data(admin, monkeypatch):
     _seed(monkeypatch, "api-test-1")
     _seed(monkeypatch, "api-test-2")
@@ -62,6 +83,7 @@ def test_api_entries_returns_seeded_data(admin, monkeypatch):
     assert "value" not in body_str.lower() or "value" not in [k for e in data["entries"] for k in e.get("fields", {})]
 
 
+@pytest.mark.macos
 def test_api_copy_writes_clipboard_and_audits(admin, monkeypatch):
     _seed(monkeypatch, "copy-target", value="copy-secret-v")
     entries = json.loads(_get(admin, "/api/entries").read())["entries"]

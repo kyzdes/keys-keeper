@@ -1,10 +1,12 @@
 # keys-keeper
 
-> **A macOS secrets manager AI coding agents architecturally cannot leak from.**
+[![tests](https://github.com/kyzdes/keys-keeper/actions/workflows/tests.yml/badge.svg)](https://github.com/kyzdes/keys-keeper/actions/workflows/tests.yml)
 
-Stores API keys, SSH keys, server credentials, and domain info in the macOS Keychain. Ships with a Claude skill that lets agents *put* secrets into your files without ever *seeing* the value.
+> **A secrets manager AI coding agents architecturally cannot leak from.**
 
-**Status:** v0.1 · macOS · single-user · MIT license · 103 tests green
+Stores API keys, SSH keys, server credentials, and domain info in the OS-native credential store (macOS Keychain on macOS, Credential Manager on Windows). Ships with a Claude skill that lets agents *put* secrets into your files without ever *seeing* the value.
+
+**Status:** v0.1 · macOS + Windows · single-user · MIT license
 
 <!--
   TODO(launch): record 30-45s demo gif showing
@@ -32,6 +34,8 @@ It's not a policy. It's the command surface.
 
 ## Install
 
+### macOS
+
 ```bash
 git clone https://github.com/kyzdes/keys-keeper.git
 cd keys-keeper
@@ -42,20 +46,36 @@ echo 'export KEYS_KEEPER_ALLOW_REVEAL=1' >> ~/.zshrc   # optional — lets shell
 ./scripts/install_skill.sh                             # copies the Claude skill into ~/.claude/skills/
 ```
 
-Requires Python 3.10+ and macOS (Linux/Windows backends are on the roadmap, see below).
+### Windows
+
+```powershell
+git clone https://github.com/kyzdes/keys-keeper.git
+cd keys-keeper
+pipx install .
+
+keys doctor                                            # creates %APPDATA%\keys-keeper\, probes Credential Manager
+setx KEYS_KEEPER_ALLOW_REVEAL 1                        # optional — effective in NEW shells
+.\scripts\install_skill.ps1                            # copies the Claude skill into %USERPROFILE%\.claude\skills\
+```
+
+Requires Python 3.10+ (Linux backend is on the roadmap).
 
 ## Quick start
 
 ```bash
-# 1. Save a secret without typing it into an AI chat
+# macOS
 pbcopy <<<"sk-or-v1-..."
 keys add openrouter-cline --type api_key --from-clipboard --tag llm
 
-# 2. Now any Claude session can ask:
-#    "вставь openrouter-cline в .env как OPENROUTER_API_KEY"
-#    The agent runs `keys inject` — it sees `injected 1 secret`, never the value.
+# Windows (PowerShell)
+Set-Clipboard "sk-or-v1-..."
+keys add openrouter-cline --type api_key --from-clipboard --tag llm
 
-# 3. Browse the admin
+# Now any Claude session can ask:
+#   "вставь openrouter-cline в .env как OPENROUTER_API_KEY"
+# The agent runs `keys inject` — it sees `injected 1 secret`, never the value.
+
+# Browse the admin
 keys serve
 ```
 
@@ -65,7 +85,7 @@ keys serve
 |---|---|
 | `keys add NAME --from-clipboard / --from-file / --stdin` | `keys reveal NAME` (refuses unless `KEYS_KEEPER_ALLOW_REVEAL=1`) |
 | `keys list / info / audit` | |
-| `keys copy NAME` — value goes to `pbcopy`, auto-clears in 30s with hash check | |
+| `keys copy NAME` — value goes to the OS clipboard, auto-clears in 30s with hash check | |
 | `keys inject NAME --file F --as ENV` — appends `ENV=value` to file | |
 | `keys resolve FILE` — substitutes `__KEYS:name__` placeholders | |
 | `keys ssh NAME` — opens session via tempfile-resolved key, file shredded on exit | |
@@ -126,7 +146,7 @@ Encrypted backup via `keys export` (AES-256-GCM with PBKDF2-HMAC-SHA256, 600k it
 Open source, accepting PRs.
 
 - [ ] **Linux backend** via `secret-tool` (libsecret) — `KeychainBackend` interface already abstracted
-- [ ] **Windows backend** via Credential Manager (with chunking for SSH keys — CredMan has a 2560-byte cap)
+- [x] ~~**Windows backend** via Credential Manager (with chunking for SSH keys — CredMan has a 2560-byte cap)~~ — shipped in v0.2
 - [ ] **Touch ID-gated reveal in admin** with auto-wipe from DOM after 10s
 - [ ] **Cursor / Aider / Cline rule-file generators** beyond the Claude skill format
 - [ ] **CSV export from `/audit`** (already CLI-only via `keys audit > file.csv`)
@@ -135,9 +155,9 @@ Open source, accepting PRs.
 
 See [`docs/superpowers/specs/2026-05-04-keys-keeper-design.md`](docs/superpowers/specs/2026-05-04-keys-keeper-design.md) for the full design including security model and threat boundaries.
 
-## Honest limitations (v0.1)
+## Honest limitations
 
-- **macOS only.** Keychain backend is the only one shipped.
+- **macOS + Windows only.** Linux (libsecret) backend is on the roadmap.
 - **Single user, single machine.** No team / multi-user / sharing.
 - **No cloud sync.** Use `keys export` + your favorite encrypted-file-sync route if you need it.
 - **Bulk paste cleanly handles `api_key` only.** Other types need their type-specific fields filled by hand or via `+ New` in the admin.

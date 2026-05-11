@@ -150,7 +150,49 @@
     state.entries = data.entries;
     renderTagRail();
     render();
+    loadEnvPanel().catch(() => { /* panel is best-effort; never blocks dashboard */ });
   }
+
+  // Heuristic — purely visual hint for the user to find env-resident
+  // secrets worth migrating. Does NOT classify automatically; the user
+  // decides what to move. Word-boundary on `_` so KEYS_KEEPER_HOME (a
+  // config path) doesn't false-positive on the substring KEY.
+  const ENV_SECRETY_RE = /(?:^|_)(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|APIKEY|AUTH|PRIVATE)(?:_|$)/i;
+  const envState = { names: [], filter: '' };
+
+  async function loadEnvPanel() {
+    const panel = document.getElementById('env-panel');
+    if (!panel) return;
+    const data = await api('/api/env-names');
+    envState.names = data.names || [];
+    if (envState.names.length === 0) return;
+    panel.hidden = false;
+    document.getElementById('env-count').textContent = `${envState.names.length} vars`;
+    renderEnvList();
+  }
+
+  function renderEnvList() {
+    const mount = document.getElementById('env-list');
+    if (!mount) return;
+    mount.innerHTML = '';
+    const q = envState.filter.toLowerCase();
+    const filtered = q
+      ? envState.names.filter(n => n.toLowerCase().includes(q))
+      : envState.names;
+    if (filtered.length === 0) {
+      mount.append(el('span', { class: 'env-empty' }, 'no matches'));
+      return;
+    }
+    filtered.forEach(name => {
+      const cls = 'env-name' + (ENV_SECRETY_RE.test(name) ? ' env-name-suspect' : '');
+      mount.append(el('span', { class: cls, title: name }, name));
+    });
+  }
+
+  document.getElementById('env-search')?.addEventListener('input', (e) => {
+    envState.filter = e.target.value;
+    renderEnvList();
+  });
 
   document.getElementById('search')?.addEventListener('input', (e) => {
     state.search = e.target.value;

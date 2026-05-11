@@ -4,6 +4,7 @@ import gzip
 import json
 import os
 import shutil
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterator
@@ -45,11 +46,58 @@ def _sanitize_untrusted(s: str | None) -> str | None:
 
 
 def _resolve_caller_path(pid: int) -> str:
+    """Best-effort lookup of the parent process for the audit record.
+
+    On macOS we read argv via `ps`. On Windows we use ctypes against
+    kernel32 to get the image path — Windows command-line lookup requires
+    either WMI (slow, ~200-500ms per audit event) or undocumented PEB
+    parsing (fragile across WoW64), and the image path alone already
+    captures 95% of the useful signal (which shell / IDE / agent invoked
+    us). Document this asymmetry: macOS caller_path is a command line,
+    Windows caller_path is an exe path.
+    """
     try:
+        if sys.platform == "win32":
+            return _sanitize_untrusted(_resolve_caller_path_win(pid)) or "?"
         out = os.popen(f"ps -p {pid} -o command=").read().strip()
         return _sanitize_untrusted(out) or "?"
     except Exception:
         return "?"
+
+
+def _resolve_caller_path_win(pid: int) -> str:
+    import ctypes
+    from ctypes import wintypes
+
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+    OpenProcess = kernel32.OpenProcess
+    OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    OpenProcess.restype = wintypes.HANDLE
+
+    QueryFullProcessImageNameW = kernel32.QueryFullProcessImageNameW
+    QueryFullProcessImageNameW.argtypes = [
+        wintypes.HANDLE, wintypes.DWORD,
+        wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD),
+    ]
+    QueryFullProcessImageNameW.restype = wintypes.BOOL
+
+    CloseHandle = kernel32.CloseHandle
+    CloseHandle.argtypes = [wintypes.HANDLE]
+    CloseHandle.restype = wintypes.BOOL
+
+    h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not h:
+        return ""
+    try:
+        size = wintypes.DWORD(1024)
+        buf = ctypes.create_unicode_buffer(size.value)
+        if not QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+            return ""
+        return buf.value
+    finally:
+        CloseHandle(h)
 
 
 class AuditLog:

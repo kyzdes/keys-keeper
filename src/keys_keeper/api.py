@@ -7,6 +7,7 @@ import subprocess
 import threading
 import time
 from urllib.parse import parse_qs, unquote, urlparse
+from keys_keeper import clipboard
 from keys_keeper.audit import AuditLog
 from keys_keeper.composition import build_backend
 from keys_keeper.models import now_iso
@@ -78,7 +79,22 @@ def handle_api(handler, *, paths: Paths, method: str, path: str, body: bytes | N
     if route == "/api/status" and method == "GET":
         return _status(handler, paths)
 
+    if route == "/api/env-names" and method == "GET":
+        return _env_names(handler)
+
     handler._send_json(404, {"error": "not found"})
+
+
+def _env_names(handler) -> None:
+    """Return the *names* of process env vars — never the values.
+
+    The dashboard surfaces this to help users find env-resident secrets
+    that should migrate into keys-keeper. Values stay on the backend; if
+    we ever expose them here we break the project's central guarantee
+    (any agent that fetches /dashboard could parse plaintext from HTML).
+    """
+    names = sorted(os.environ.keys())
+    handler._send_json(200, {"names": names})
 
 
 def _entries(handler, paths: Paths, query: str) -> None:
@@ -138,10 +154,9 @@ def _copy(handler, paths: Paths, body: bytes) -> None:
         return
     # Clipboard sink (controlled, not transcript-visible to the agent).
     value = sealed.unseal()
-    proc = subprocess.run(["pbcopy"], input=value, text=True)
-    if proc.returncode != 0:
-        audit.record(op="copy", name=e.name, id_=e.id, success=False, error="pbcopy failed")
-        handler._send_json(500, {"error": "pbcopy failed"})
+    if not clipboard.write(value):
+        audit.record(op="copy", name=e.name, id_=e.id, success=False, error="clipboard write failed")
+        handler._send_json(500, {"error": "clipboard write failed"})
         return
     audit.record(op="copy", name=e.name, id_=e.id, success=True)
     written_hash = hashlib.sha256(value.encode("utf-8")).hexdigest()
@@ -156,10 +171,10 @@ def _copy(handler, paths: Paths, body: bytes) -> None:
 
 def _clipboard_clear_after(written_hash: str, delay: int) -> None:
     time.sleep(delay)
-    current = subprocess.run(["pbpaste"], capture_output=True, text=True).stdout
+    current = clipboard.read()
     current_hash = hashlib.sha256(current.encode("utf-8")).hexdigest()
     if current_hash == written_hash:
-        subprocess.run(["pbcopy"], input="", text=True)
+        clipboard.clear()
 
 
 def _audit(handler, paths: Paths, query: str) -> None:

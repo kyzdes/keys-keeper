@@ -8,9 +8,10 @@ import re
 import subprocess
 import sys
 import threading
+import webbrowser
 from pathlib import Path
 
-from keys_keeper import __version__
+from keys_keeper import __version__, clipboard
 from keys_keeper.audit import AuditLog
 from keys_keeper.composition import build_backend
 from keys_keeper.models import Entry, EntryType, ValidationError, now_iso
@@ -34,12 +35,13 @@ def _read_input(args: argparse.Namespace) -> str:
         )
         return ""
     if args.from_clipboard:
-        result = subprocess.run(["pbpaste"], capture_output=True, text=True)
-        return result.stdout
+        return clipboard.read().lstrip("﻿")
     if args.from_file:
-        return Path(args.from_file).read_text()
+        # PowerShell on Windows defaults to writing UTF-8 with BOM; strip it
+        # so the stored secret doesn't carry an invisible ﻿ at the start.
+        return Path(args.from_file).read_text(encoding="utf-8-sig")
     if args.stdin:
-        return sys.stdin.read().rstrip("\n")
+        return sys.stdin.read().lstrip("﻿").rstrip("\n")
     if args.web:
         sys.stderr.write("--web flag is implemented in admin UI; not supported here yet\n")
         return ""
@@ -171,9 +173,13 @@ def cmd_info(args: argparse.Namespace) -> int:
 
 def cmd_reveal(args: argparse.Namespace) -> int:
     if os.environ.get("KEYS_KEEPER_ALLOW_REVEAL") != "1":
+        if sys.platform == "win32":
+            hint = "run `setx KEYS_KEEPER_ALLOW_REVEAL 1` (takes effect in new shells)"
+        else:
+            hint = "add `export KEYS_KEEPER_ALLOW_REVEAL=1` to ~/.zshrc"
         sys.stderr.write(
             "error: `keys reveal` requires KEYS_KEEPER_ALLOW_REVEAL=1 in env. "
-            "Add to ~/.zshrc to enable. (This guard exists so AI agents can't accidentally "
+            f"{hint}. (This guard exists so AI agents can't accidentally "
             "extract plaintext.)\n"
         )
         return 2
@@ -230,10 +236,9 @@ def cmd_copy(args: argparse.Namespace) -> int:
     # Clipboard is a controlled (non-transcript) sink. Unwrap is local; the
     # plaintext does not leave this scope as a printable.
     value = sealed.unseal()
-    proc = subprocess.run(["pbcopy"], input=value, text=True)
-    if proc.returncode != 0:
-        audit.record(op="copy", name=e.name, id_=e.id, success=False, error="pbcopy failed")
-        sys.stderr.write("pbcopy failed\n")
+    if not clipboard.write(value):
+        audit.record(op="copy", name=e.name, id_=e.id, success=False, error="clipboard write failed")
+        sys.stderr.write("clipboard write failed\n")
         return 1
 
     written_hash = hashlib.sha256(value.encode("utf-8")).hexdigest()
@@ -241,19 +246,7 @@ def cmd_copy(args: argparse.Namespace) -> int:
     audit.record(op="copy", name=e.name, id_=e.id, success=True)
 
     if args.clear_after > 0:
-        # Spawn a detached process to handle the clear, so this CLI exits immediately.
-        clear_script = (
-            f"sleep {args.clear_after}; "
-            f"current=$(pbpaste 2>/dev/null); "
-            f"current_hash=$(echo -n \"$current\" | shasum -a 256 | cut -d' ' -f1); "
-            f"if [ \"$current_hash\" = \"{written_hash}\" ]; then printf '' | pbcopy; fi"
-        )
-        subprocess.Popen(
-            ["sh", "-c", clear_script],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
+        clipboard.spawn_clear_after(written_hash, args.clear_after)
     return 0
 
 
@@ -451,7 +444,10 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         print("KEYS_KEEPER_ALLOW_REVEAL: ✓ set")
     else:
         print("KEYS_KEEPER_ALLOW_REVEAL: ⚠ not set — `keys reveal` will refuse to print plaintext")
-        print("  add `export KEYS_KEEPER_ALLOW_REVEAL=1` to ~/.zshrc to enable")
+        if sys.platform == "win32":
+            print("  run `setx KEYS_KEEPER_ALLOW_REVEAL 1` to enable (effective in new shells)")
+        else:
+            print("  add `export KEYS_KEEPER_ALLOW_REVEAL=1` to ~/.zshrc to enable")
 
     # data.json validity + entry count
     try:
@@ -531,7 +527,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     url = f"http://127.0.0.1:{args.port or 7777}/?t={server.token}"
     print(f"keys-keeper admin starting on {url}")
     if not args.no_open:
-        subprocess.Popen(["open", url])
+        webbrowser.open(url)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -747,6 +743,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Windows consoles + Python default to cp1252 for the standard streams.
+    # We need UTF-8 on:
+    #   - stdout/stderr — so doctor's ✓/✗ glyphs and non-ASCII secret names render
+    #   - stdin — so PowerShell pipes (which emit UTF-8 bytes with BOM) decode
+    #     into the expected `﻿`-prefixed string we can strip; otherwise
+    #     cp1252 turns the BOM into three separate Latin-1 chars (ï»¿) that
+    #     leak into the stored secret.
+    # No-op on macOS (already UTF-8). errors="replace" is a fallback for
+    # ancient terminals that can't be reconfigured.
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
     parser = build_parser()
     args = parser.parse_args(argv)
     return args.func(args)
